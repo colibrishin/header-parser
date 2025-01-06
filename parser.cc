@@ -554,6 +554,13 @@ bool Parser::ParseClass(Token &token)
   writer_.String("isstruct");
   writer_.Bool(isStruct);
 
+	Token dllSpecToken;
+    if (GetSpecifier(dllSpecToken))
+    {
+        writer_.String("dllimport");
+        writer_.String(dllSpecToken.token.c_str());
+    }
+
   // Get the class name
   Token classNameToken;
   if(!GetIdentifier(classNameToken))
