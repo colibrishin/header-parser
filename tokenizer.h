@@ -28,6 +28,8 @@ public:
   /// Parses an identifier from the stream
   bool GetIdentifier(Token& token);
 
+  bool GetSpecifier(Token& token);
+
   /// Returns a token to the stream, effectively resetting the cursor to the start of the token
   void UngetToken(const Token &token);
 

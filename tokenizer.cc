@@ -274,6 +274,10 @@ bool Tokenizer::GetToken(Token &token, bool angleBracketsForStrings, bool sepera
       token.constType = ConstType::kBoolean;
       token.boolConst = false;
     }
+    else if(token.token.rfind("_API") != std::string::npos)
+    {
+	    token.tokenType = TokenType::kDllSpecifier;
+    }
 
     return true;
   }
@@ -447,6 +451,19 @@ bool Tokenizer::GetIdentifier(Token &token)
     return false;
 
   if(token.tokenType == TokenType::kIdentifier)
+    return true;
+
+  UngetToken(token);
+  return false;
+}
+
+//--------------------------------------------------------------------------------------------------
+bool Tokenizer::GetSpecifier(Token &token)
+{
+  if(!GetToken(token))
+    return false;
+
+  if(token.tokenType == TokenType::kDllSpecifier)
     return true;
 
   UngetToken(token);
