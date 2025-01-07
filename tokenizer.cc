@@ -278,6 +278,10 @@ bool Tokenizer::GetToken(Token &token, bool angleBracketsForStrings, bool sepera
     {
 	    token.tokenType = TokenType::kDllSpecifier;
     }
+    else if(token.token == "final")
+    {
+	    token.tokenType = TokenType::kInheritSpecifier;
+    }
 
     return true;
   }
@@ -464,6 +468,9 @@ bool Tokenizer::GetSpecifier(Token &token)
     return false;
 
   if(token.tokenType == TokenType::kDllSpecifier)
+    return true;
+
+  if(token.tokenType == TokenType::kInheritSpecifier)
     return true;
 
   UngetToken(token);
