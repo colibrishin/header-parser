@@ -92,7 +92,9 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
     {
         const std::string className = (*it)["name"].GetString();
         std::string baseClass;
+        std::string baseClassNamespace;
         bool isNativeBaseClass = true;
+
         if ((*it)["parents"].Empty()) 
         {
             baseClass = "void";
@@ -108,23 +110,44 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
         else 
         {
             baseClass = (*it)["parents"][0]["name"]["name"].GetString();
+
+            // Check if any namespace persists.
+            if (const size_t namespaceOffset = baseClass.rfind("::");
+                namespaceOffset != std::string::npos) 
+            {
+                baseClassNamespace = baseClass.substr(0, namespaceOffset);
+                baseClass = baseClass.substr(namespaceOffset + 2, baseClass.size() - (namespaceOffset + 2));
+            }
         }
 
-        std::string baseClassNamespace;
         if (isNativeBaseClass) 
         {
             if (baseClass.find("::") == std::string::npos)
             {
-                // same namespace, namespaces are discarded.
+                // same namespace, namespaces were discarded.
                 baseClassNamespace = joinedNamespace;
             }
             else 
             {
-               // todo
+                const std::string baseClassScope = baseClassNamespace.substr(0, baseClass.find_first_of("::"));
+                const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
+
+                if (baseClassScope == classScope) 
+                {
+                    // root namescope is same but other than that, every namespaces are different.
+                    __nop();
+                }
+                else
+                {
+                    // Drop the first different namespace and concat with the base class namespace
+                    const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+
+                    baseClassNamespace = joinedNamespace.substr(0, parentScope) + baseClassNamespace;
+                }
             }
         }
         
-        std::cout << "Class parsed with " << className << " and " << baseClass << std::endl;
+        std::cout << "Class parsed with " << joinedNamespace + className << " and " << baseClassNamespace + baseClass << std::endl;
         *outputStreamPtr << std::format(bodyGenerationPrefab, joinedNamespace + className, baseClassNamespace + baseClass);
 
         if (((*it)["meta"]).HasMember("abstract")) 
