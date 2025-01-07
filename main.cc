@@ -2,14 +2,174 @@
 #include "handler.h"
 #include "options.h"
 #include <tclap/CmdLine.h>
+
+#include <rapidjson/document.h>
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+#include <stack>
+#include <deque>
+#include <unordered_set>
+
+std::fstream* outputStreamPtr = nullptr;
 
 //----------------------------------------------------------------------------------------------------
 void print_usage()
 {
   std::cout << "Usage: inputFile" << std::endl;
+}
+//----------------------------------------------------------------------------------------------------
+
+constexpr auto bodyGenerationPrefab = "#include \"../Misc.h\"\n"
+"#include <array>\n"
+"#include <algorithm>\n"
+"#include <boost/serialization/export.hpp>\n"
+"#ifdef GENERATE_BODY\n"
+"#undef GENERATE_BODY\n"
+"#endif\n"
+"#define GENERATE_BODY typedef {1} Base;"
+"static std::string_view StaticTypeName()"
+"{{"
+"return static_type_name<{0}>::name();"
+"}}"
+"static std::string_view StaticFullTypeName()"
+"{{"
+"return static_type_name<{0}>::full_name();"
+"}}"
+"static HashType StaticTypeHash()"
+"{{"
+"return type_hash<{0}>::value;"
+"}}"
+"static bool StaticIsBaseOf(HashType hash)"
+"{{"
+"return polymorphic_type_hash<{0}>::is_base_of(hash);"
+"}}"
+"virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}"
+"virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}"
+"virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
+"virtual bool IsBaseOf(HashType hash) const {{ return {0}::StaticIsBaseOf(hash); }}"
+"private: SERIALIZE_DECL public:\n";
+
+constexpr auto registerBoostType = "namespace {0} {{{1} {2};}}\n"
+"BOOST_CLASS_EXPORT_KEY({0}::{2})\n";
+
+constexpr auto registerBoostTypeAbstract = "namespace {0} {{{1} {2};}}\n"
+"BOOST_SERIALIZATION_ASSUME_ABSTRACT({0}::{2})\n";
+
+constexpr auto staticTypePrefab = "template <> struct polymorphic_type_hash<{0}>" 
+"{{"
+"static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;"
+"static constexpr std::array<HashType, upcast_count> upcast_array = []"
+"{{"
+"std::array<HashType, upcast_count> ret{{ type_hash<{0}>::value }};"
+"std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(), polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);"
+"return ret;" 
+"}}();"
+"static bool is_base_of(const HashType hash)" 
+"{{"
+"if constexpr ((upcast_count * sizeof(HashType)) < (1 << 7))"
+"{{"
+"return std::ranges::find(upcast_array, hash) != upcast_array.end();"
+"}}"
+"static bool first_run = true; static std::array<HashType, upcast_count> sorted_upcast = upcast_array;"
+"if (first_run)"
+"{{"
+"std::sort(sorted_upcast.begin(), sorted_upcast.end(), std::less<int const*>());"
+"first_run = false;" 
+"}}"
+"return std::ranges::binary_search(sorted_upcast, hash);" 
+"}}"
+"}};";
+
+//----------------------------------------------------------------------------------------------------
+void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it) 
+{
+    assert(outputStreamPtr != nullptr);
+
+    if ((*it)["type"] == "class")
+    {
+        const std::string className = (*it)["name"].GetString();
+        std::string baseClass;
+        bool isNativeBaseClass = true;
+        if ((*it)["parents"].Empty()) 
+        {
+            baseClass = "void";
+            isNativeBaseClass = false;
+        }
+        else if (const std::string baseTypeName = (*it)["parents"][0]["name"]["name"].GetString(); 
+            baseTypeName.substr(0, 5).find("boost") != std::string::npos)
+        {
+            // not a native class.
+            baseClass = "void";
+            isNativeBaseClass = false;
+        }
+        else 
+        {
+            baseClass = (*it)["parents"][0]["name"]["name"].GetString();
+        }
+
+        std::string baseClassNamespace;
+        if (isNativeBaseClass) 
+        {
+            if (baseClass.find("::") == std::string::npos)
+            {
+                // same namespace, namespaces are discarded.
+                baseClassNamespace = joinedNamespace;
+            }
+            else 
+            {
+               // todo
+            }
+        }
+        
+        std::cout << "Class parsed with " << className << " and " << baseClass << std::endl;
+        *outputStreamPtr << std::format(bodyGenerationPrefab, joinedNamespace + className, baseClassNamespace + baseClass);
+
+        if (((*it)["meta"]).HasMember("abstract")) 
+        {
+            *outputStreamPtr << std::format(registerBoostTypeAbstract, joinedNamespace.substr(0, joinedNamespace.size() - 2), "class", className);
+        }
+        else 
+        {
+            *outputStreamPtr << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), "class", className);
+        }
+
+        *outputStreamPtr << std::format(staticTypePrefab, joinedNamespace + className, baseClassNamespace + baseClass);
+    }
+}
+
+void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string> currentNamespace)
+{
+    const rapidjson::Value& ref = *root;
+
+    if (ref["type"] == "namespace")
+    {
+        currentNamespace.push_back(ref["name"].GetString());
+
+        if (!ref["members"].Empty())
+        {
+            for (auto it = ref["members"].End() - 1; it != ref["members"].Begin() - 1; --it)
+            {
+                if ((*it)["type"] == "namespace")
+                {
+                    std::deque<std::string> nextNameSpace = currentNamespace;
+                    RecurseNamespace(it, nextNameSpace);
+                    continue;
+                }
+
+                std::string joinedNamespace;
+                for (const std::string& identifier : currentNamespace)
+                {
+                    joinedNamespace += identifier + "::";
+                }
+
+                std::cout << "Test header tags with namespace " << joinedNamespace << std::endl;
+                TestTags(joinedNamespace, it);
+            }
+        }
+    }
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -60,7 +220,37 @@ int main(int argc, char** argv)
 
   Parser parser(options);
   if (parser.Parse(buffer.str().c_str()))
-    std::cout << parser.result() << std::endl;
+  {
+      std::filesystem::path path = "HeaderGenerated/" + inputFile;
+      path.replace_extension(".generated.h");
+
+      if (!std::filesystem::exists(path.parent_path())) 
+      {
+          std::cout << "Create directory " << path.parent_path() << std::endl;
+          std::filesystem::create_directories(path.parent_path());
+      }
+
+      std::fstream outputSteam(path.c_str(), std::ios::out);
+
+      if (!outputSteam.is_open()) 
+      {
+          std::cerr << "Unable to create a file " << path << std::endl;
+          return -1;
+      }
+
+      outputStreamPtr = &outputSteam;
+
+      rapidjson::Document document;
+      document.Parse(parser.result().c_str());
+      assert(document.IsArray());
+
+      for (auto it = document.End() - 1; it != document.Begin() - 1; --it) 
+      {
+          RecurseNamespace(it, {});
+      }
+
+      outputSteam.close();
+  }
   
 	return 0;
 }
