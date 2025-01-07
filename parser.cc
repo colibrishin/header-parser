@@ -446,34 +446,45 @@ void Parser::PopScope()
 //--------------------------------------------------------------------------------------------------
 bool Parser::ParseNamespace()
 {
-  writer_.StartObject();
-  writer_.String("type");
-  writer_.String("namespace");
-
   Token token;
-  if (!GetIdentifier(token))
-    return Error("Missing namespace name");
+  std::vector<std::string> nestedNamespaces;
+  do
+  {
+      if (GetIdentifier(token))
+      {
+          writer_.StartObject();
+          writer_.String("type");
+          writer_.String("namespace");
+          writer_.String("name");
+          writer_.String(token.token.c_str());
 
-  writer_.String("name");
-  writer_.String(token.token.c_str());
+          writer_.String("members");
+          writer_.StartArray();
+
+          PushScope(token.token, ScopeType::kNamespace, AccessControlType::kPublic);
+          nestedNamespaces.push_back(token.token);
+      }
+  } while (MatchSymbol("::"));
+
+  if (nestedNamespaces.empty()) 
+  {
+      return Error("Missing namespace name");
+  }
 
   if (!RequireSymbol("{"))
     return false;
-
-  writer_.String("members");
-  writer_.StartArray();
-
-  PushScope(token.token, ScopeType::kNamespace, AccessControlType::kPublic);
 
   while (!MatchSymbol("}"))
     if (!ParseStatement())
       return false;
 
-  PopScope();
+  for (auto it = nestedNamespaces.begin(); it != nestedNamespaces.end(); ++it)
+  {
+      PopScope();
+      writer_.EndArray();
+      writer_.EndObject();
+  }
 
-  writer_.EndArray();
-
-  writer_.EndObject();
   return true;
 }
 
