@@ -49,8 +49,7 @@ constexpr auto bodyGenerationPrefab = "#include \"../Misc.h\"\n"
 "virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}"
 "virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}"
 "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
-"virtual bool IsBaseOf(HashType hash) const {{ return {0}::StaticIsBaseOf(hash); }}"
-"private: SERIALIZE_DECL public:\n";
+"virtual bool IsBaseOf(HashType hash) const {{ return {0}::StaticIsBaseOf(hash); }} ";
 
 constexpr auto registerBoostType = "namespace {0} {{{1} {2};}}\n"
 "BOOST_CLASS_EXPORT_KEY({0}::{2})\n";
@@ -81,7 +80,79 @@ constexpr auto staticTypePrefab = "template <> struct polymorphic_type_hash<{0}>
 "}}"
 "return std::ranges::binary_search(sorted_upcast, hash);" 
 "}}"
-"}};";
+"}}; ";
+
+constexpr auto serializeInlineDeclStart =
+"friend class Engine::Serializer; friend class boost::serialization::access; private: template <class Archive> void serialize(Archive &ar, const unsigned int file_version) {";
+constexpr auto serializeBaseClassAr = "ar& boost::serialization::base_object<{0}>(*this); ";
+constexpr auto serializePropertyAr = "ar& {0}; ";
+constexpr auto serializeInlineDeclEnd = "} public: ";
+
+//----------------------------------------------------------------------------------------------------
+std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClass)
+{
+    std::string serializeBody = serializeInlineDeclStart;
+    if (isNativeBaseClass) 
+    {
+        serializeBody += std::format(serializeBaseClassAr, baseClass);
+    }
+    
+    std::vector<std::string> propertyNames;
+
+    if ((*val)["members"].Empty())
+    {
+        serializeBody += serializeInlineDeclEnd;
+        return serializeBody + "\n";
+    }
+
+    for (auto it = (*val)["members"].Begin(); it != (*val)["members"].End(); ++it)
+    {
+        if ((*it)["type"] == "property")
+        {
+            std::cout << "Found property " << (*it)["name"].GetString() << std::endl;
+            propertyNames.push_back((*it)["name"].GetString());
+        }
+    }
+
+    if (!propertyNames.empty())
+    {
+        for (const std::string& property : propertyNames)
+        {
+            serializeBody += std::format(serializePropertyAr, property);
+        }
+    }
+
+    serializeBody += serializeInlineDeclEnd;
+
+    return serializeBody + "\n";
+}
+
+void ReconstructBaseClassNamespace(const std::string& joinedNamespace, std::string& outBaseClass, std::string& outBaseClassNamespace)
+{
+    if (outBaseClass.find("::") == std::string::npos)
+    {
+        // same namespace, namespaces were discarded.
+        outBaseClassNamespace = joinedNamespace;
+    }
+    else
+    {
+        const std::string baseClassScope = outBaseClassNamespace.substr(0, outBaseClass.find_first_of("::"));
+        const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
+
+        if (baseClassScope == classScope)
+        {
+            // root namescope is same but other than that, every namespaces are different.
+            __nop();
+        }
+        else
+        {
+            // Drop the first different namespace and concat with the base class namespace
+            const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+
+            outBaseClassNamespace = joinedNamespace.substr(0, parentScope) + outBaseClassNamespace;
+        }
+    }
+}
 
 //----------------------------------------------------------------------------------------------------
 void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it) 
@@ -122,33 +193,12 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
 
         if (isNativeBaseClass) 
         {
-            if (baseClass.find("::") == std::string::npos)
-            {
-                // same namespace, namespaces were discarded.
-                baseClassNamespace = joinedNamespace;
-            }
-            else 
-            {
-                const std::string baseClassScope = baseClassNamespace.substr(0, baseClass.find_first_of("::"));
-                const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
-
-                if (baseClassScope == classScope) 
-                {
-                    // root namescope is same but other than that, every namespaces are different.
-                    __nop();
-                }
-                else
-                {
-                    // Drop the first different namespace and concat with the base class namespace
-                    const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
-
-                    baseClassNamespace = joinedNamespace.substr(0, parentScope) + baseClassNamespace;
-                }
-            }
+            ReconstructBaseClassNamespace(joinedNamespace, baseClass, baseClassNamespace);
         }
         
         std::cout << "Class parsed with " << joinedNamespace + className << " and " << baseClassNamespace + baseClass << std::endl;
-        *outputStreamPtr << std::format(bodyGenerationPrefab, joinedNamespace + className, baseClassNamespace + baseClass);
+
+        *outputStreamPtr << std::format(bodyGenerationPrefab, joinedNamespace + className, baseClassNamespace + baseClass) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseClass);
 
         if (((*it)["meta"]).HasMember("abstract")) 
         {
