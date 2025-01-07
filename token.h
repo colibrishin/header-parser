@@ -10,7 +10,8 @@ enum class TokenType
   kSymbol,
   kIdentifier,
   kConst,
-	kDllSpecifier
+  kDllSpecifier,
+  kInheritSpecifier
 };
 
 enum class ConstType

@@ -551,26 +551,26 @@ bool Parser::ParseClass(Token &token)
 
   WriteCurrentAccessControlType();
   if (!ParseComment())
-    return false;
+	  return false;
   if (!ParseMacroMeta())
-    return false;
+	  return false;
 
-  if(MatchIdentifier("template") && !ParseClassTemplate())
-    return false;
+  if (MatchIdentifier("template") && !ParseClassTemplate())
+	  return false;
 
   bool isStruct = MatchIdentifier("struct");
   if (!(MatchIdentifier("class") || isStruct))
-    return Error("Missing identifier class or struct");
+	  return Error("Missing identifier class or struct");
 
   writer_.String("isstruct");
   writer_.Bool(isStruct);
 
-	Token dllSpecToken;
-    if (GetSpecifier(dllSpecToken))
-    {
-        writer_.String("dllimport");
-        writer_.String(dllSpecToken.token.c_str());
-    }
+  Token dllSpecToken;
+  if (GetSpecifier(dllSpecToken))
+  {
+	  writer_.String("dllimport");
+	  writer_.String(dllSpecToken.token.c_str());
+  }
 
   // Get the class name
   Token classNameToken;
@@ -579,6 +579,18 @@ bool Parser::ParseClass(Token &token)
 
   writer_.String("name");
   writer_.String(classNameToken.token.c_str());
+
+  Token inheritToken;
+  writer_.String("final");
+
+  if (GetSpecifier(inheritToken))
+  {
+    writer_.Bool(true);
+  }
+  else
+  {
+	writer_.Bool(false);
+  }
 
   // Match base types
   if(MatchSymbol(":"))
