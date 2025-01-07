@@ -140,32 +140,41 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
         const std::string baseClassScope = outBaseClassNamespace.substr(0, outBaseClassNamespace.find_first_of("::"));
         const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
 
-        const std::string classSuffixScope = joinedNamespace.substr(joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::"));
+        const size_t suffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
 
         if (baseClassScope == classScope)
         {
             // root namescope is same but other than that, every namespaces are different.
-            __nop();
+            return;
         }
-        else if (baseClassScope == classSuffixScope)
+
+        if (suffixOffset != std::string::npos)
         {
-	        // namespace can be merged.
-            outBaseClassNamespace = joinedNamespace;
+            if (const std::string classSuffixScope = joinedNamespace.substr(suffixOffset);
+				baseClassScope == classSuffixScope)
+            {
+	            // namespace can be merged.
+				outBaseClassNamespace = joinedNamespace;
+                return;
+            }
         }
         else
         {
-            // Drop the first different namespace and concat with the base class namespace
-            const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
-
-            // If namespace is one, merge with class namespace.
-            if (joinedNamespace.substr(0, parentScope).rfind("::") == std::string::npos)
-            {
-	            outBaseClassNamespace = joinedNamespace;
-                return;
-            }
-
-            outBaseClassNamespace = joinedNamespace.substr(0, parentScope) + outBaseClassNamespace;
+	        outBaseClassNamespace = joinedNamespace;
+            return;
         }
+
+        // Drop the first different namespace and concat with the base class namespace
+        const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+
+        // If namespace is one, merge with class namespace.
+        if (joinedNamespace.substr(0, parentScope).rfind("::") == std::string::npos)
+        {
+            outBaseClassNamespace = joinedNamespace;
+            return;
+        }
+
+        outBaseClassNamespace = joinedNamespace.substr(0, parentScope) + outBaseClassNamespace;
     }
 }
 
@@ -187,7 +196,7 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
             isNativeBaseClass = false;
         }
         else if (const std::string baseTypeName = (*it)["parents"][0]["name"]["name"].GetString(); 
-            baseTypeName.substr(0, 5).find("boost") != std::string::npos)
+            baseTypeName.length() <= 5 && baseTypeName.substr(0, 5).find("boost") != std::string::npos)
         {
             // not a native class.
             baseClass = "void";
