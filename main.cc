@@ -22,14 +22,15 @@ void print_usage()
 }
 //----------------------------------------------------------------------------------------------------
 
-constexpr auto bodyGenerationPrefab = "#include \"../Misc.h\"\n"
+constexpr auto bodyGenerationPrefab = "#pragma once\n"
+"#include \"../Misc.h\"\n"
 "#include <array>\n"
 "#include <algorithm>\n"
 "#include <boost/serialization/export.hpp>\n"
 "#ifdef GENERATE_BODY\n"
 "#undef GENERATE_BODY\n"
 "#endif\n"
-"#define GENERATE_BODY typedef {1} Base;"
+"#define GENERATE_BODY public: typedef {1} Base;"
 "static std::string_view StaticTypeName()"
 "{{"
 "return static_type_name<{0}>::name();"
@@ -127,27 +128,41 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
     return serializeBody + "\n";
 }
 
-void ReconstructBaseClassNamespace(const std::string& joinedNamespace, std::string& outBaseClass, std::string& outBaseClassNamespace)
+void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std::string& outBaseClass, std::string& outBaseClassNamespace)
 {
-    if (outBaseClass.find("::") == std::string::npos)
+    if (outBaseClassNamespace.find("::") == std::string::npos)
     {
         // same namespace, namespaces were discarded.
         outBaseClassNamespace = joinedNamespace;
     }
     else
     {
-        const std::string baseClassScope = outBaseClassNamespace.substr(0, outBaseClass.find_first_of("::"));
+        const std::string baseClassScope = outBaseClassNamespace.substr(0, outBaseClassNamespace.find_first_of("::"));
         const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
+
+        const std::string classSuffixScope = joinedNamespace.substr(joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::"));
 
         if (baseClassScope == classScope)
         {
             // root namescope is same but other than that, every namespaces are different.
             __nop();
         }
+        else if (baseClassScope == classSuffixScope)
+        {
+	        // namespace can be merged.
+            outBaseClassNamespace = joinedNamespace;
+        }
         else
         {
             // Drop the first different namespace and concat with the base class namespace
             const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+
+            // If namespace is one, merge with class namespace.
+            if (joinedNamespace.substr(0, parentScope).rfind("::") == std::string::npos)
+            {
+	            outBaseClassNamespace = joinedNamespace;
+                return;
+            }
 
             outBaseClassNamespace = joinedNamespace.substr(0, parentScope) + outBaseClassNamespace;
         }
@@ -186,7 +201,7 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
             if (const size_t namespaceOffset = baseClass.rfind("::");
                 namespaceOffset != std::string::npos) 
             {
-                baseClassNamespace = baseClass.substr(0, namespaceOffset);
+                baseClassNamespace = baseClass.substr(0, namespaceOffset) + "::";
                 baseClass = baseClass.substr(namespaceOffset + 2, baseClass.size() - (namespaceOffset + 2));
             }
         }
