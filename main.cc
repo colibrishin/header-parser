@@ -23,11 +23,39 @@ void print_usage()
 }
 //----------------------------------------------------------------------------------------------------
 
-constexpr auto bodyGenerationPrefab = "#pragma once\n"
+constexpr auto bodyGenerationStaticPrefab = "#pragma once\n"
 "#include \"../Misc.h\"\n"
 "#include <array>\n"
 "#include <algorithm>\n"
 "#include <boost/serialization/export.hpp>\n"
+"#include <boost/serialization/access.hpp>\n"
+"#ifdef GENERATE_BODY\n"
+"#undef GENERATE_BODY\n"
+"#endif\n"
+"#define GENERATE_BODY public: typedef {1} Base;"
+"static std::string_view StaticTypeName()"
+"{{"
+"return static_type_name<{0}>::name();"
+"}}"
+"static std::string_view StaticFullTypeName()"
+"{{"
+"return static_type_name<{0}>::full_name();"
+"}}"
+"static HashType StaticTypeHash()"
+"{{"
+"return type_hash<{0}>::value;"
+"}}"
+"static bool StaticIsBaseOf(HashType hash)"
+"{{"
+"return polymorphic_type_hash<{0}>::is_base_of(hash);"
+"}} ";
+
+constexpr auto bodyGenerationOverridablePrefab = "#pragma once\n"
+"#include \"../Misc.h\"\n"
+"#include <array>\n"
+"#include <algorithm>\n"
+"#include <boost/serialization/export.hpp>\n"
+"#include <boost/serialization/access.hpp>\n"
 "#ifdef GENERATE_BODY\n"
 "#undef GENERATE_BODY\n"
 "#endif\n"
@@ -129,7 +157,7 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
     return serializeBody + "\n";
 }
 
-void ReconstructBaseClassNamespace(const std::string_view joinedNamespace, std::string& outBaseClassNamespace)
+void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace, std::string& outBaseClassNamespace)
 {
     if (outBaseClassNamespace.find("::") == std::string::npos)
     {
@@ -190,9 +218,104 @@ void ReconstructBaseClassNamespace(const std::string_view joinedNamespace, std::
 }
 
 //----------------------------------------------------------------------------------------------------
+
+bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::string_view joinedNamespace, const std::string_view closureName, std::string& outBaseClosure, std::string& outBaseClosureNamespace) 
+{
+    bool isNativeBaseClass = true;
+
+    if ((*it)["parents"].Empty())
+    {
+        outBaseClosure = "void";
+        isNativeBaseClass = false;
+    }
+    else if (const std::string baseTypeName = (*it)["parents"][0]["name"]["name"].GetString();
+        baseTypeName.length() >= 5 && baseTypeName.substr(0, 5).find("boost") != std::string::npos)
+    {
+        // not a native class.
+        outBaseClosure = "void";
+        isNativeBaseClass = false;
+    }
+    else
+    {
+        outBaseClosure = (*it)["parents"][0]["name"]["name"].GetString();
+
+        if ((*it)["parents"][0]["name"]["type"] == "template")
+        {
+            std::stringstream argumentStream;
+            const rapidjson::Value& templateArguments = (*it)["parents"][0]["name"]["arguments"];
+            argumentStream << '<';
+            for (auto arg = templateArguments.Begin(); arg != templateArguments.End(); ++arg)
+            {
+                if (std::string_view thisArg = (*arg)["name"].GetString();
+                    closureName == thisArg && thisArg.rfind("::") == std::string::npos)
+                {
+                    std::cout << "Found class name in the argument, with no namespaces. Append the class namespace..." << std::endl;
+                    argumentStream << std::format("{}{}{}", joinedNamespace, (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
+                }
+                else
+                {
+                    argumentStream << std::format("{}{}", (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
+                }
+            }
+            argumentStream << '>';
+
+            std::cout << "Found template arguments " << argumentStream.str() << std::endl;
+            outBaseClosure += argumentStream.str();
+        }
+
+        // Check if any namespace persists.
+        if (const size_t namespaceOffset = outBaseClosure.rfind("::");
+            namespaceOffset != std::string::npos)
+        {
+            outBaseClosureNamespace = outBaseClosure.substr(0, namespaceOffset) + "::";
+            outBaseClosure = outBaseClosure.substr(namespaceOffset + 2, outBaseClosure.size() - (namespaceOffset + 2));
+        }
+    }
+
+    if (isNativeBaseClass)
+    {
+        ReconstructBaseClosureNamespaceImpl(joinedNamespace, outBaseClosureNamespace);
+    }
+
+    return isNativeBaseClass;
+}
+
 void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it) 
 {
     assert(outputStreamPtr != nullptr);
+
+    if ((*it)["type"] == "struct") 
+    {
+        const std::string structName = (*it)["name"].GetString();
+        std::cout << "Reading struct " << structName << std::endl;
+        std::string baseStruct;
+        std::string baseStructNamespace;
+        bool isNativeBaseClass = ReconstructBaseClosureAndNamespace(it, joinedNamespace, structName, baseStruct, baseStructNamespace);
+
+        std::string structFullName(joinedNamespace.begin(), joinedNamespace.end());
+        structFullName += structName;
+        std::cout << "Struct parsed with " << structName << " and " << baseStructNamespace << baseStruct << std::endl;
+
+        if (((*it)["meta"]).HasMember("module")) 
+        {
+            *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, structFullName, baseStructNamespace + baseStruct) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
+        }
+        else
+        {
+            *outputStreamPtr << std::format(bodyGenerationStaticPrefab, structFullName, baseStructNamespace + baseStruct) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
+        }
+
+        if (((*it)["meta"]).HasMember("abstract"))
+        {
+            *outputStreamPtr << std::format(registerBoostTypeAbstract, joinedNamespace.substr(0, joinedNamespace.size() - 2), "struct", structName);
+        }
+        else
+        {
+            *outputStreamPtr << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), "struct", structName);
+        }
+
+        *outputStreamPtr << std::format(staticTypePrefab, structFullName, baseStructNamespace+ baseStruct);
+    }
 
     if ((*it)["type"] == "class")
     {
@@ -200,68 +323,14 @@ void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it
         std::cout << "Reading class " << className << std::endl;
         std::string baseClass;
         std::string baseClassNamespace;
-        bool isNativeBaseClass = true;
-
-        if ((*it)["parents"].Empty()) 
-        {
-            baseClass = "void";
-            isNativeBaseClass = false;
-        }
-        else if (const std::string baseTypeName = (*it)["parents"][0]["name"]["name"].GetString(); 
-            baseTypeName.length() >= 5 && baseTypeName.substr(0, 5).find("boost") != std::string::npos)
-        {
-            // not a native class.
-            baseClass = "void";
-            isNativeBaseClass = false;
-        }
-        else 
-        {
-            baseClass = (*it)["parents"][0]["name"]["name"].GetString();
-
-            if ((*it)["parents"][0]["name"]["type"] == "template") 
-            {
-                std::stringstream argumentStream;
-                const rapidjson::Value& templateArguments = (*it)["parents"][0]["name"]["arguments"];
-                argumentStream << '<';
-                for (auto arg = templateArguments.Begin(); arg != templateArguments.End(); ++arg)
-                {
-                    if (std::string_view thisArg = (*arg)["name"].GetString();
-                        className == thisArg && thisArg.rfind("::") == std::string::npos)
-                    {
-                        std::cout << "Found class name in the argument, with no namespaces. Append the class namespace..." << std::endl;
-                        argumentStream << std::format("{}{}{}", joinedNamespace, (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
-                    }
-                    else 
-                    {
-                        argumentStream << std::format("{}{}", (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
-                    }
-                }
-                argumentStream << '>';
-
-                std::cout << "Found template arguments " << argumentStream.str() << std::endl;
-                baseClass += argumentStream.str();
-            }
-
-            // Check if any namespace persists.
-            if (const size_t namespaceOffset = baseClass.rfind("::");
-                namespaceOffset != std::string::npos) 
-            {
-                baseClassNamespace = baseClass.substr(0, namespaceOffset) + "::";
-                baseClass = baseClass.substr(namespaceOffset + 2, baseClass.size() - (namespaceOffset + 2));
-            }
-        }
-
-        if (isNativeBaseClass) 
-        {
-            ReconstructBaseClassNamespace(joinedNamespace, baseClassNamespace);
-        }
+        bool isNativeBaseClass = ReconstructBaseClosureAndNamespace(it, joinedNamespace, className, baseClass, baseClassNamespace);
         
         std::string classFullName(joinedNamespace.begin(), joinedNamespace.end());
         classFullName += className;
 
-        std::cout << "Class parsed with " << classFullName << " and " << baseClassNamespace + baseClass << std::endl;
+        std::cout << "Class parsed with " << classFullName << " and " << baseClassNamespace << baseClass << std::endl;
 
-        *outputStreamPtr << std::format(bodyGenerationPrefab, classFullName, baseClassNamespace + baseClass) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseClassNamespace, baseClass);
+        *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, classFullName, baseClassNamespace + baseClass) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseClassNamespace, baseClass);
 
         if (((*it)["meta"]).HasMember("abstract")) 
         {
