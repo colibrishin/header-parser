@@ -142,6 +142,8 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
 
         const size_t suffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
 
+        std::cout << std::format("base class scope: {}, class scope: {}, suffix offset: {}", baseClassScope, classScope, suffixOffset) << std::endl;
+
         if (baseClassScope == classScope)
         {
             // root namescope is same but other than that, every namespaces are different.
@@ -160,7 +162,7 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
         }
         else
         {
-	        outBaseClassNamespace = joinedNamespace;
+	        outBaseClassNamespace = joinedNamespace + outBaseClassNamespace;
             return;
         }
 
@@ -186,6 +188,7 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
     if ((*it)["type"] == "class")
     {
         const std::string className = (*it)["name"].GetString();
+        std::cout << "Reading class " << className << std::endl;
         std::string baseClass;
         std::string baseClassNamespace;
         bool isNativeBaseClass = true;
@@ -196,7 +199,7 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
             isNativeBaseClass = false;
         }
         else if (const std::string baseTypeName = (*it)["parents"][0]["name"]["name"].GetString(); 
-            baseTypeName.length() <= 5 && baseTypeName.substr(0, 5).find("boost") != std::string::npos)
+            baseTypeName.length() >= 5 && baseTypeName.substr(0, 5).find("boost") != std::string::npos)
         {
             // not a native class.
             baseClass = "void";
@@ -318,8 +321,9 @@ int main(int argc, char** argv)
   Parser parser(options);
   if (parser.Parse(buffer.str().c_str()))
   {
-      std::filesystem::path path = "HeaderGenerated/" + inputFile;
+      std::filesystem::path path = inputFile;
       path.replace_extension(".generated.h");
+      path = path.parent_path().parent_path() / "HeaderGenerated" / path.parent_path().stem() / path.filename();
 
       if (!std::filesystem::exists(path.parent_path())) 
       {
@@ -337,13 +341,23 @@ int main(int argc, char** argv)
 
       outputStreamPtr = &outputSteam;
 
+      std::cout << "== Start of " << path << " ==" << std::endl;
+      std::cout << "Parsing json" << std::endl;
       rapidjson::Document document;
       document.Parse(parser.result().c_str());
       assert(document.IsArray());
 
-      for (auto it = document.End() - 1; it != document.Begin() - 1; --it) 
+      try 
       {
-          RecurseNamespace(it, {});
+          for (auto it = document.End() - 1; it != document.Begin() - 1; --it)
+          {
+              RecurseNamespace(it, {});
+          }
+      }
+      catch (std::exception e)
+      {
+          std::cerr << e.what() << std::endl;
+          outputSteam.close();
       }
 
       outputSteam.close();
