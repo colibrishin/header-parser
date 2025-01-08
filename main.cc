@@ -140,21 +140,23 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
         const std::string baseClassScope = outBaseClassNamespace.substr(0, outBaseClassNamespace.find_first_of("::"));
         const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
 
-        const size_t suffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+        const size_t classSuffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
 
-        std::cout << std::format("base class scope: {}, class scope: {}, suffix offset: {}", baseClassScope, classScope, suffixOffset) << std::endl;
+        std::cout << std::format("base class scope: {}, class scope: {}, suffix offset: {}", baseClassScope, classScope, classSuffixOffset) << std::endl;
 
         if (baseClassScope == classScope)
         {
+            std::cout << "Use class namespace..." << std::endl;
             // root namescope is same but other than that, every namespaces are different.
             return;
         }
 
-        if (suffixOffset != std::string::npos)
+        if (classSuffixOffset != std::string::npos)
         {
-            if (const std::string classSuffixScope = joinedNamespace.substr(suffixOffset);
+            if (const std::string classSuffixScope = joinedNamespace.substr(classSuffixOffset);
 				baseClassScope == classSuffixScope)
             {
+                std::cout << "Merge class namespace...";
 	            // namespace can be merged.
 				outBaseClassNamespace = joinedNamespace;
                 return;
@@ -162,21 +164,25 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
         }
         else
         {
+            std::cout << "Append to class namespace..." << std::endl;
 	        outBaseClassNamespace = joinedNamespace + outBaseClassNamespace;
             return;
         }
 
-        // Drop the first different namespace and concat with the base class namespace
-        const size_t parentScope = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+        const size_t parentScopeEnd = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
+        const size_t parentScopeBegin = joinedNamespace.substr(0, parentScopeEnd + 2).rfind("::");
 
         // If namespace is one, merge with class namespace.
-        if (joinedNamespace.substr(0, parentScope).rfind("::") == std::string::npos)
+        if (parentScopeBegin == std::string::npos)
         {
-            outBaseClassNamespace = joinedNamespace;
+            std::cout << "Class has one namespace, merging..." << std::endl;
+            outBaseClassNamespace = joinedNamespace + "::" + outBaseClassNamespace;
             return;
         }
 
-        outBaseClassNamespace = joinedNamespace.substr(0, parentScope) + outBaseClassNamespace;
+        std::cout << "Remove the nearest namespace and appending..." << std::endl;
+        const std::string parentScope = joinedNamespace.substr(0, parentScopeBegin);
+        outBaseClassNamespace = parentScope + "::" + outBaseClassNamespace;
     }
 }
 
