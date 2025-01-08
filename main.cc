@@ -12,6 +12,7 @@
 #include <stack>
 #include <deque>
 #include <unordered_set>
+#include <sstream>
 
 std::fstream* outputStreamPtr = nullptr;
 
@@ -90,15 +91,15 @@ constexpr auto serializePropertyAr = "ar& {0}; ";
 constexpr auto serializeInlineDeclEnd = "} public: ";
 
 //----------------------------------------------------------------------------------------------------
-std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClass)
+std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClassNamespace, const std::string& baseClass)
 {
     std::string serializeBody = serializeInlineDeclStart;
     if (isNativeBaseClass) 
     {
-        serializeBody += std::format(serializeBaseClassAr, baseClass);
+        serializeBody += std::format(serializeBaseClassAr, baseClassNamespace + baseClass);
     }
     
-    std::vector<std::string> propertyNames;
+    std::vector<std::string_view> propertyNames;
 
     if ((*val)["members"].Empty())
     {
@@ -117,7 +118,7 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
 
     if (!propertyNames.empty())
     {
-        for (const std::string& property : propertyNames)
+        for (const std::string_view& property : propertyNames)
         {
             serializeBody += std::format(serializePropertyAr, property);
         }
@@ -128,7 +129,7 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
     return serializeBody + "\n";
 }
 
-void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std::string& outBaseClass, std::string& outBaseClassNamespace)
+void ReconstructBaseClassNamespace(const std::string_view joinedNamespace, std::string& outBaseClassNamespace)
 {
     if (outBaseClassNamespace.find("::") == std::string::npos)
     {
@@ -138,7 +139,7 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
     else
     {
         const std::string baseClassScope = outBaseClassNamespace.substr(0, outBaseClassNamespace.find_first_of("::"));
-        const std::string classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
+        const std::string_view classScope = joinedNamespace.substr(0, joinedNamespace.find_first_of("::"));
 
         const size_t classSuffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
 
@@ -153,7 +154,7 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
 
         if (classSuffixOffset != std::string::npos)
         {
-            if (const std::string classSuffixScope = joinedNamespace.substr(classSuffixOffset);
+            if (const std::string_view classSuffixScope = joinedNamespace.substr(classSuffixOffset);
 				baseClassScope == classSuffixScope)
             {
                 std::cout << "Merge class namespace...";
@@ -165,7 +166,7 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
         else
         {
             std::cout << "Append to class namespace..." << std::endl;
-	        outBaseClassNamespace = joinedNamespace + outBaseClassNamespace;
+	        outBaseClassNamespace.insert(outBaseClassNamespace.begin(), joinedNamespace.begin(), joinedNamespace.end());
             return;
         }
 
@@ -176,18 +177,20 @@ void ReconstructBaseClassNamespace(const std::string& joinedNamespace, const std
         if (parentScopeBegin == std::string::npos)
         {
             std::cout << "Class has one namespace, merging..." << std::endl;
-            outBaseClassNamespace = joinedNamespace + "::" + outBaseClassNamespace;
+            outBaseClassNamespace.insert(outBaseClassNamespace.begin(), { ':', ':'});
+            outBaseClassNamespace.insert(outBaseClassNamespace.begin(), joinedNamespace.begin(), joinedNamespace.end());
             return;
         }
 
         std::cout << "Remove the nearest namespace and appending..." << std::endl;
-        const std::string parentScope = joinedNamespace.substr(0, parentScopeBegin);
-        outBaseClassNamespace = parentScope + "::" + outBaseClassNamespace;
+        const std::string_view parentScope = joinedNamespace.substr(0, parentScopeBegin);
+        outBaseClassNamespace.insert(outBaseClassNamespace.begin(), { ':', ':' });
+        outBaseClassNamespace.insert(outBaseClassNamespace.begin(), parentScope.begin(), parentScope.end());
     }
 }
 
 //----------------------------------------------------------------------------------------------------
-void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it) 
+void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it) 
 {
     assert(outputStreamPtr != nullptr);
 
@@ -215,6 +218,30 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
         {
             baseClass = (*it)["parents"][0]["name"]["name"].GetString();
 
+            if ((*it)["parents"][0]["name"]["type"] == "template") 
+            {
+                std::stringstream argumentStream;
+                const rapidjson::Value& templateArguments = (*it)["parents"][0]["name"]["arguments"];
+                argumentStream << '<';
+                for (auto arg = templateArguments.Begin(); arg != templateArguments.End(); ++arg)
+                {
+                    if (std::string_view thisArg = (*arg)["name"].GetString();
+                        className == thisArg && thisArg.rfind("::") == std::string::npos)
+                    {
+                        std::cout << "Found class name in the argument, with no namespaces. Append the class namespace..." << std::endl;
+                        argumentStream << std::format("{}{}{}", joinedNamespace, (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
+                    }
+                    else 
+                    {
+                        argumentStream << std::format("{}{}", (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
+                    }
+                }
+                argumentStream << '>';
+
+                std::cout << "Found template arguments " << argumentStream.str() << std::endl;
+                baseClass += argumentStream.str();
+            }
+
             // Check if any namespace persists.
             if (const size_t namespaceOffset = baseClass.rfind("::");
                 namespaceOffset != std::string::npos) 
@@ -226,12 +253,15 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
 
         if (isNativeBaseClass) 
         {
-            ReconstructBaseClassNamespace(joinedNamespace, baseClass, baseClassNamespace);
+            ReconstructBaseClassNamespace(joinedNamespace, baseClassNamespace);
         }
         
-        std::cout << "Class parsed with " << joinedNamespace + className << " and " << baseClassNamespace + baseClass << std::endl;
+        std::string classFullName(joinedNamespace.begin(), joinedNamespace.end());
+        classFullName += className;
 
-        *outputStreamPtr << std::format(bodyGenerationPrefab, joinedNamespace + className, baseClassNamespace + baseClass) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseClass);
+        std::cout << "Class parsed with " << classFullName << " and " << baseClassNamespace + baseClass << std::endl;
+
+        *outputStreamPtr << std::format(bodyGenerationPrefab, classFullName, baseClassNamespace + baseClass) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseClassNamespace, baseClass);
 
         if (((*it)["meta"]).HasMember("abstract")) 
         {
@@ -242,11 +272,11 @@ void TestTags(const std::string& joinedNamespace, const rapidjson::Value* it)
             *outputStreamPtr << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), "class", className);
         }
 
-        *outputStreamPtr << std::format(staticTypePrefab, joinedNamespace + className, baseClassNamespace + baseClass);
+        *outputStreamPtr << std::format(staticTypePrefab, classFullName, baseClassNamespace + baseClass);
     }
 }
 
-void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string> currentNamespace)
+void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string_view> currentNamespace)
 {
     const rapidjson::Value& ref = *root;
 
@@ -260,15 +290,14 @@ void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string> curr
             {
                 if ((*it)["type"] == "namespace")
                 {
-                    std::deque<std::string> nextNameSpace = currentNamespace;
-                    RecurseNamespace(it, nextNameSpace);
+                    RecurseNamespace(it, currentNamespace);
                     continue;
                 }
 
                 std::string joinedNamespace;
-                for (const std::string& identifier : currentNamespace)
+                for (const std::string_view& identifier : currentNamespace)
                 {
-                    joinedNamespace += identifier + "::";
+                    joinedNamespace += std::format("{}{}", identifier, "::");
                 }
 
                 std::cout << "Test header tags with namespace " << joinedNamespace << std::endl;
@@ -352,6 +381,8 @@ int main(int argc, char** argv)
       rapidjson::Document document;
       document.Parse(parser.result().c_str());
       assert(document.IsArray());
+
+      std::cout << parser.result().c_str() << std::endl;
 
       try 
       {
