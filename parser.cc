@@ -1160,6 +1160,7 @@ std::string Parser::ParseTypeNodeDeclarator()
     first = false;
 
     // Match an identifier, empty delcarator could be exist.
+    GetConst(token);
     GetIdentifier(token);
 
     declarator += token.token;
