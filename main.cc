@@ -81,6 +81,22 @@ constexpr auto bodyGenerationOverridablePrefab = "#pragma once\n"
 "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
 "virtual bool IsBaseOf(HashType hash) const {{ return {0}::StaticIsBaseOf(hash); }} ";
 
+constexpr auto bodyGenerationResourceGetterCreator =
+"template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
+static Engine::Weak<{0}> Get(const std::string & name) {{ return Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\
+template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
+static Engine::Weak<{0}> GetByMetadataPath(const std::filesystem::path& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
+template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
+static Engine::Weak<{0}> GetByRawPath(const std::filesystem::path& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}\
+template <typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
+static Engine::Strong<{0}> Create(const std::string_view name, Args&&... args)\
+{{\
+if (!name.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock()) {{ return {{}}; }}\
+const auto obj = boost::make_shared<{0}>(std::forward<Args>(args)...); \
+Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
+return obj; \
+}} ";
+
 constexpr auto registerBoostType = "namespace {0} {{{1} {2};}}\n"
 "BOOST_CLASS_EXPORT_KEY({0}::{2})\n";
 
@@ -132,7 +148,7 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
     if ((*val)["members"].Empty())
     {
         serializeBody += serializeInlineDeclEnd;
-        return serializeBody + "\n";
+        return serializeBody;
     }
 
     for (auto it = (*val)["members"].Begin(); it != (*val)["members"].End(); ++it)
@@ -154,7 +170,7 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
 
     serializeBody += serializeInlineDeclEnd;
 
-    return serializeBody + "\n";
+    return serializeBody;
 }
 
 void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace, std::string& outBaseClassNamespace)
@@ -296,16 +312,20 @@ void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it
         structFullName += structName;
         std::cout << "Struct parsed with " << structName << " and " << baseStructNamespace << baseStruct << std::endl;
 
-        if (((*it)["meta"]).HasMember("module")) 
+        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("module"))
         {
-            *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, structFullName, baseStructNamespace + baseStruct) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
+            *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, structFullName, baseStructNamespace + baseStruct);
         }
         else
         {
-            *outputStreamPtr << std::format(bodyGenerationStaticPrefab, structFullName, baseStructNamespace + baseStruct) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
+            *outputStreamPtr << std::format(bodyGenerationStaticPrefab, structFullName, baseStructNamespace + baseStruct);
         }
 
-        if (((*it)["meta"]).HasMember("abstract"))
+        *outputStreamPtr << GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
+        *outputStreamPtr << '\n';
+
+
+        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("abstract"))
         {
             *outputStreamPtr << std::format(registerBoostTypeAbstract, joinedNamespace.substr(0, joinedNamespace.size() - 2), "struct", structName);
         }
@@ -330,9 +350,17 @@ void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it
 
         std::cout << "Class parsed with " << classFullName << " and " << baseClassNamespace << baseClass << std::endl;
 
-        *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, classFullName, baseClassNamespace + baseClass) + GenerateSerializationDeclaration(it, isNativeBaseClass, baseClassNamespace, baseClass);
+        *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, classFullName, baseClassNamespace + baseClass);
 
-        if (((*it)["meta"]).HasMember("abstract")) 
+        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("resource"))
+        {
+            *outputStreamPtr << std::format(bodyGenerationResourceGetterCreator, className);
+        }
+
+        *outputStreamPtr << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClassNamespace, baseClass);
+        *outputStreamPtr << '\n';
+
+        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("abstract"))
         {
             *outputStreamPtr << std::format(registerBoostTypeAbstract, joinedNamespace.substr(0, joinedNamespace.size() - 2), "class", className);
         }
