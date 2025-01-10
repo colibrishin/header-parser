@@ -300,7 +300,7 @@ void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it
 {
     assert(outputStreamPtr != nullptr);
 
-    if ((*it)["type"] == "struct") 
+    if ((*it)["isstruct"].GetBool() == true) 
     {
         const std::string structName = (*it)["name"].GetString();
         std::cout << "Reading struct " << structName << std::endl;
@@ -336,8 +336,7 @@ void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it
 
         *outputStreamPtr << std::format(staticTypePrefab, structFullName, baseStructNamespace+ baseStruct);
     }
-
-    if ((*it)["type"] == "class")
+    else
     {
         const std::string className = (*it)["name"].GetString();
         std::cout << "Reading class " << className << std::endl;
