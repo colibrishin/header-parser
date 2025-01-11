@@ -110,7 +110,11 @@ constexpr auto staticTypePrefab = "template <> struct polymorphic_type_hash<{0}>
 "{{"
 "std::array<HashType, upcast_count> ret{{ type_hash<{0}>::value }};"
 "std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(), polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);"
-"return ret;" 
+"if (std::ranges::adjacent_find(ret) != std::ranges::end(ret))"
+"{{"
+"	throw std::exception(\"Duplicated type hash found in upcast array\");"
+"}}"
+"return ret;"
 "}}();"
 "static bool is_base_of(const HashType hash)" 
 "{{"
@@ -118,13 +122,7 @@ constexpr auto staticTypePrefab = "template <> struct polymorphic_type_hash<{0}>
 "{{"
 "return std::ranges::find(upcast_array, hash) != upcast_array.end();"
 "}}"
-"static bool first_run = true; static std::array<HashType, upcast_count> sorted_upcast = upcast_array;"
-"if (first_run)"
-"{{"
-"std::sort(sorted_upcast.begin(), sorted_upcast.end(), std::less<int const*>());"
-"first_run = false;" 
-"}}"
-"return std::ranges::binary_search(sorted_upcast, hash);" 
+"return std::ranges::binary_search(upcast_array, hash);" 
 "}}"
 "}}; ";
 
@@ -312,14 +310,7 @@ void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it
         structFullName += structName;
         std::cout << "Struct parsed with " << structName << " and " << baseStructNamespace << baseStruct << std::endl;
 
-        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("module"))
-        {
-            *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, structFullName, baseStructNamespace + baseStruct);
-        }
-        else
-        {
-            *outputStreamPtr << std::format(bodyGenerationStaticPrefab, structFullName, baseStructNamespace + baseStruct);
-        }
+    	*outputStreamPtr << std::format(bodyGenerationOverridablePrefab, structFullName, baseStructNamespace + baseStruct);
 
         *outputStreamPtr << GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
         *outputStreamPtr << '\n';
