@@ -23,7 +23,15 @@ void print_usage()
 }
 //----------------------------------------------------------------------------------------------------
 
-constexpr auto bodyGenerationStaticPrefab = "#pragma once\n"
+constexpr auto generatedHeaderFormat = 
+"#ifdef {0}_GENERATED_H\n"
+"#ifndef POST_{0}_H\n"
+"#define POST_{0}_H\n"
+"{3}\n"
+"#endif\n"
+"#endif\n"
+"#ifndef {0}_GENERATED_H\n"
+"#define {0}_GENERATED_H\n"
 "#include \"../Misc.h\"\n"
 "#include <array>\n"
 "#include <algorithm>\n"
@@ -32,7 +40,12 @@ constexpr auto bodyGenerationStaticPrefab = "#pragma once\n"
 "#ifdef GENERATE_BODY\n"
 "#undef GENERATE_BODY\n"
 "#endif\n"
-"#define GENERATE_BODY public: typedef {1} Base;"
+"#define GENERATE_BODY {1}\n"
+"{2}\n"
+"#endif\n";
+
+constexpr auto bodyGenerationStaticPrefab =
+"public: typedef {1} Base;"
 "static std::string_view StaticTypeName()"
 "{{"
 "return static_type_name<{0}>::name();"
@@ -43,39 +56,14 @@ constexpr auto bodyGenerationStaticPrefab = "#pragma once\n"
 "}}"
 "static HashType StaticTypeHash()"
 "{{"
-"return type_hash<{0}>::value;"
+"return &type_hash<{0}>::value;"
 "}}"
 "static bool StaticIsBaseOf(HashType hash)"
 "{{"
 "return polymorphic_type_hash<{0}>::is_base_of(hash);"
 "}} ";
 
-constexpr auto bodyGenerationOverridablePrefab = "#pragma once\n"
-"#include \"../Misc.h\"\n"
-"#include <array>\n"
-"#include <algorithm>\n"
-"#include <boost/serialization/export.hpp>\n"
-"#include <boost/serialization/access.hpp>\n"
-"#ifdef GENERATE_BODY\n"
-"#undef GENERATE_BODY\n"
-"#endif\n"
-"#define GENERATE_BODY public: typedef {1} Base;"
-"static std::string_view StaticTypeName()"
-"{{"
-"return static_type_name<{0}>::name();"
-"}}"
-"static std::string_view StaticFullTypeName()"
-"{{"
-"return static_type_name<{0}>::full_name();"
-"}}"
-"static HashType StaticTypeHash()"
-"{{"
-"return type_hash<{0}>::value;"
-"}}"
-"static bool StaticIsBaseOf(HashType hash)"
-"{{"
-"return polymorphic_type_hash<{0}>::is_base_of(hash);"
-"}}"
+constexpr auto bodyGenerationOverridablePrefab = 
 "virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}"
 "virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}"
 "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
@@ -97,40 +85,43 @@ Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
 return obj; \
 }} ";
 
-constexpr auto registerBoostType = "namespace {0} {{{1} {2};}}\n"
-"BOOST_CLASS_EXPORT_KEY({0}::{2})\n";
-
-constexpr auto registerBoostTypeAbstract = "namespace {0} {{{1} {2};}}\n"
-"BOOST_SERIALIZATION_ASSUME_ABSTRACT({0}::{2})\n";
-
-constexpr auto staticTypePrefab = "template <> struct polymorphic_type_hash<{0}>" 
-"{{"
-"static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;"
-"static constexpr std::array<HashType, upcast_count> upcast_array = []"
-"{{"
-"std::array<HashType, upcast_count> ret{{ type_hash<{0}>::value }};"
-"std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(), polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);"
-"if (std::ranges::adjacent_find(ret) != std::ranges::end(ret))"
-"{{"
-"	throw std::exception(\"Duplicated type hash found in upcast array\");"
-"}}"
-"return ret;"
-"}}();"
-"static bool is_base_of(const HashType hash)" 
-"{{"
-"if constexpr ((upcast_count * sizeof(HashType)) < (1 << 7))"
-"{{"
-"return std::ranges::find(upcast_array, hash) != upcast_array.end();"
-"}}"
-"return std::ranges::binary_search(upcast_array, hash);" 
-"}}"
-"}}; ";
-
 constexpr auto serializeInlineDeclStart =
 "friend class Engine::Serializer; friend class boost::serialization::access; private: template <class Archive> void serialize(Archive &ar, const unsigned int file_version) {";
 constexpr auto serializeBaseClassAr = "ar& boost::serialization::base_object<{0}>(*this); ";
 constexpr auto serializePropertyAr = "ar& {0}; ";
 constexpr auto serializeInlineDeclEnd = "} public: ";
+
+constexpr auto staticForwardDeclaration = "namespace {0} {{{1} {2};}}\n";
+
+constexpr auto staticTypePrefab =
+"template <> struct polymorphic_type_hash<{0}>\
+{{\
+static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;\
+static constexpr auto upcast_array = []\
+{{\
+HashArray<upcast_count> ret{{&type_hash<{0}>::value}};\
+std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);\
+std::ranges::sort(ret, [](const auto lhs, const auto rhs) {{return *lhs < *rhs;}});\
+return ret;\
+}}();\
+static bool is_base_of(const HashType hash) \
+{{ \
+if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7)) \
+{{ \
+return std::ranges::find_if(upcast_array, [&hash](const auto other){{return hash->Equal(*other);}}) != upcast_array.end(); \
+}} \
+return std::ranges::binary_search(upcast_array, hash, [](const auto lhs, const auto rhs){{return *lhs < *rhs;}}); \
+}} \
+}}; ";
+
+constexpr auto registerBoostType = 
+"BOOST_CLASS_EXPORT_KEY({0}::{1})\n";
+
+constexpr auto registerBoostTypeAbstract =
+"BOOST_SERIALIZATION_ASSUME_ABSTRACT({0}::{1})\n";
+
+constexpr auto registerBoostTypeImpl =
+"BOOST_CLASS_EXPORT_IMPLEMENT({0}::{1})\n";
 
 //----------------------------------------------------------------------------------------------------
 std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClassNamespace, const std::string& baseClass)
@@ -237,7 +228,7 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
 {
     bool isNativeBaseClass = true;
 
-    if ((*it)["parents"].Empty())
+    if (!(*it).HasMember("parents"))
     {
         outBaseClosure = "void";
         isNativeBaseClass = false;
@@ -294,76 +285,79 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
     return isNativeBaseClass;
 }
 
-void TestTags(const std::string_view joinedNamespace, const rapidjson::Value* it) 
+void TestTags(const std::string_view fileName, const std::string_view joinedNamespace, const rapidjson::Value* it)
 {
     assert(outputStreamPtr != nullptr);
 
-    if ((*it)["isstruct"].GetBool() == true) 
+    if ((*it)["type"] == "class")
     {
-        const std::string structName = (*it)["name"].GetString();
-        std::cout << "Reading struct " << structName << std::endl;
-        std::string baseStruct;
-        std::string baseStructNamespace;
-        bool isNativeBaseClass = ReconstructBaseClosureAndNamespace(it, joinedNamespace, structName, baseStruct, baseStructNamespace);
+        const std::string closureName = (*it)["name"].GetString();
+        std::cout << "Reading closure " << closureName << std::endl;
+        std::string baseClosure;
+        std::string baseClosureNamespace;
+        bool        isNativeBaseClass = ReconstructBaseClosureAndNamespace
+            (it, joinedNamespace, closureName, baseClosure, baseClosureNamespace);
 
-        std::string structFullName(joinedNamespace.begin(), joinedNamespace.end());
-        structFullName += structName;
-        std::cout << "Struct parsed with " << structName << " and " << baseStructNamespace << baseStruct << std::endl;
+        std::string closureFullName(joinedNamespace.begin(), joinedNamespace.end());
+        closureFullName += closureName;
+        std::cout << "Closure parsed with " << closureName << " and " << baseClosureNamespace << baseClosure << std::endl;
 
-    	*outputStreamPtr << std::format(bodyGenerationOverridablePrefab, structFullName, baseStructNamespace + baseStruct);
+        std::stringstream bodyGenerated;
+        std::stringstream staticsGenerated;
+        std::stringstream postGenerated;
 
-        *outputStreamPtr << GenerateSerializationDeclaration(it, isNativeBaseClass, baseStructNamespace, baseStruct);
-        *outputStreamPtr << '\n';
+    	bodyGenerated << std::format(bodyGenerationStaticPrefab, closureFullName, baseClosureNamespace + baseClosure);
+        bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
+        bodyGenerated << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClosureNamespace, baseClosure);
 
-
-        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("abstract"))
+        std::string closureType;
+        if ((*it)["isstruct"].GetBool() == true)
         {
-            *outputStreamPtr << std::format(registerBoostTypeAbstract, joinedNamespace.substr(0, joinedNamespace.size() - 2), "struct", structName);
+            closureType = "struct";
         }
         else
         {
-            *outputStreamPtr << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), "struct", structName);
+            closureType = "class";
+
+            if (it->HasMember("meta") && ((*it)["meta"]).HasMember("resource"))
+            {
+                bodyGenerated << std::format(bodyGenerationResourceGetterCreator, closureName);
+            }
         }
 
-        *outputStreamPtr << std::format(staticTypePrefab, structFullName, baseStructNamespace+ baseStruct);
-    }
-    else
-    {
-        const std::string className = (*it)["name"].GetString();
-        std::cout << "Reading class " << className << std::endl;
-        std::string baseClass;
-        std::string baseClassNamespace;
-        bool isNativeBaseClass = ReconstructBaseClosureAndNamespace(it, joinedNamespace, className, baseClass, baseClassNamespace);
+        staticsGenerated << std::format(staticForwardDeclaration, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureType, closureName);
+
+        if (it->HasMember("meta"))
+        {
+            if ((*it)["meta"].HasMember("serialize"))
+            {
+                if (it->HasMember("meta") && (*it)["meta"].HasMember("abstract"))
+                {
+                    staticsGenerated << std::format
+                        (
+                         registerBoostTypeAbstract, joinedNamespace.substr
+                         (0, joinedNamespace.size() - 2), closureName
+                        );
+                }
+                else
+                {
+                    staticsGenerated << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+                }
+
+                postGenerated << std::format(registerBoostTypeImpl, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+            }
+        }
         
-        std::string classFullName(joinedNamespace.begin(), joinedNamespace.end());
-        classFullName += className;
+        staticsGenerated << std::format(staticTypePrefab, closureFullName, baseClosureNamespace + baseClosure);
 
-        std::cout << "Class parsed with " << classFullName << " and " << baseClassNamespace << baseClass << std::endl;
-
-        *outputStreamPtr << std::format(bodyGenerationOverridablePrefab, classFullName, baseClassNamespace + baseClass);
-
-        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("resource"))
-        {
-            *outputStreamPtr << std::format(bodyGenerationResourceGetterCreator, className);
-        }
-
-        *outputStreamPtr << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClassNamespace, baseClass);
-        *outputStreamPtr << '\n';
-
-        if (it->HasMember("meta") && ((*it)["meta"]).HasMember("abstract"))
-        {
-            *outputStreamPtr << std::format(registerBoostTypeAbstract, joinedNamespace.substr(0, joinedNamespace.size() - 2), "class", className);
-        }
-        else 
-        {
-            *outputStreamPtr << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), "class", className);
-        }
-
-        *outputStreamPtr << std::format(staticTypePrefab, classFullName, baseClassNamespace + baseClass);
+        std::string nameUpperString = closureName;
+        std::ranges::transform(nameUpperString, nameUpperString.begin(), [](const char& c){return std::toupper(c);});
+        
+        *outputStreamPtr << std::format(generatedHeaderFormat, nameUpperString, bodyGenerated.str(), staticsGenerated.str(), postGenerated.str());
     }
 }
 
-void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string_view> currentNamespace)
+void RecurseNamespace(const std::string_view fileName, const rapidjson::Value* root, std::deque<std::string_view> currentNamespace)
 {
     const rapidjson::Value& ref = *root;
 
@@ -377,7 +371,7 @@ void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string_view>
             {
                 if ((*it)["type"] == "namespace")
                 {
-                    RecurseNamespace(it, currentNamespace);
+                    RecurseNamespace(fileName, it, currentNamespace);
                     continue;
                 }
 
@@ -388,7 +382,7 @@ void RecurseNamespace(const rapidjson::Value* root, std::deque<std::string_view>
                 }
 
                 std::cout << "Test header tags with namespace " << joinedNamespace << std::endl;
-                TestTags(joinedNamespace, it);
+                TestTags(fileName, joinedNamespace, it);
             }
         }
     }
@@ -447,10 +441,10 @@ int main(int argc, char** argv)
       path.replace_extension(".generated.h");
       path = path.parent_path().parent_path() / "HeaderGenerated" / path.parent_path().stem() / path.filename();
 
-      if (!std::filesystem::exists(path.parent_path())) 
+      if (!exists(path.parent_path())) 
       {
           std::cout << "Create directory " << path.parent_path() << std::endl;
-          std::filesystem::create_directories(path.parent_path());
+          create_directories(path.parent_path());
       }
 
       std::fstream outputSteam(path.c_str(), std::ios::out);
@@ -473,12 +467,14 @@ int main(int argc, char** argv)
 
       try 
       {
+          std::string filename = path.filename().generic_string();
+          
           for (auto it = document.End() - 1; it != document.Begin() - 1; --it)
           {
-              RecurseNamespace(it, {});
+              RecurseNamespace(filename, it, {});
           }
       }
-      catch (std::exception e)
+      catch (std::exception& e)
       {
           std::cerr << e.what() << std::endl;
           outputSteam.close();
