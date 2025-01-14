@@ -1,4 +1,4 @@
-#include "parser.h"
+ #include "parser.h"
 #include "handler.h"
 #include "options.h"
 #include <tclap/CmdLine.h>
@@ -10,11 +10,10 @@
 #include <sstream>
 #include <filesystem>
 #include <stack>
-#include <deque>
+#include <vector>
 #include <unordered_set>
 #include <sstream>
-
-std::fstream* outputStreamPtr = nullptr;
+#include <execution>
 
 //----------------------------------------------------------------------------------------------------
 void print_usage()
@@ -80,7 +79,7 @@ template <typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resou
 static Engine::Strong<{0}> Create(const std::string_view name, Args&&... args)\
 {{\
 if (!name.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock()) {{ return {{}}; }}\
-const auto obj = boost::make_shared<{0}>(std::forward<Args>(args)...); \
+const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...)); \
 Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
 return obj; \
 }} ";
@@ -291,10 +290,8 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
     return isNativeBaseClass;
 }
 
-void TestTags(const std::string_view fileName, const std::string_view joinedNamespace, const rapidjson::Value* it)
+void TestTags(std::fstream& outputStream, const std::string_view fileName, const std::string_view joinedNamespace, const rapidjson::Value* it)
 {
-    assert(outputStreamPtr != nullptr);
-
     if ((*it)["type"] == "class")
     {
         const std::string closureName = (*it)["name"].GetString();
@@ -362,11 +359,11 @@ void TestTags(const std::string_view fileName, const std::string_view joinedName
         std::string nameUpperString = closureName;
         std::ranges::transform(nameUpperString, nameUpperString.begin(), [](const char& c){return std::toupper(c);});
         
-        *outputStreamPtr << std::format(generatedHeaderFormat, nameUpperString, bodyGenerated.str(), staticsGenerated.str(), postGenerated.str());
+        outputStream << std::format(generatedHeaderFormat, nameUpperString, bodyGenerated.str(), staticsGenerated.str(), postGenerated.str());
     }
 }
 
-void RecurseNamespace(const std::string_view fileName, const rapidjson::Value* root, std::deque<std::string_view> currentNamespace)
+void RecurseNamespace(std::fstream& outputStream, const std::string_view fileName, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace)
 {
     const rapidjson::Value& ref = *root;
 
@@ -380,7 +377,7 @@ void RecurseNamespace(const std::string_view fileName, const rapidjson::Value* r
             {
                 if ((*it)["type"] == "namespace")
                 {
-                    RecurseNamespace(fileName, it, currentNamespace);
+                    RecurseNamespace(outputStream, fileName, it, currentNamespace);
                     continue;
                 }
 
@@ -391,7 +388,7 @@ void RecurseNamespace(const std::string_view fileName, const rapidjson::Value* r
                 }
 
                 std::cout << "Test header tags with namespace " << joinedNamespace << std::endl;
-                TestTags(fileName, joinedNamespace, it);
+                TestTags(outputStream, fileName, joinedNamespace, it);
             }
         }
     }
@@ -401,7 +398,7 @@ void RecurseNamespace(const std::string_view fileName, const rapidjson::Value* r
 int main(int argc, char** argv)
 {
   Options options;
-  std::string inputFile;
+  std::vector<std::string> inputFiles;
   try
   {
     using namespace TCLAP;
@@ -414,11 +411,11 @@ int main(int argc, char** argv)
     MultiArg<std::string> functionName("f", "function", "The name of the function macro", false, "", cmd);
     ValueArg<std::string> propertyName("p", "property", "The name of the property macro", false, "PROPERTY", "", cmd);
     MultiArg<std::string> customMacro("m", "macro", "Custom macro names to parse", false, "", cmd);
-    UnlabeledValueArg<std::string> inputFileArg("inputFile", "The file to process", true, "", "", cmd);
+    UnlabeledMultiArg<std::string> inputFileArg("inputFile", "The file to process", true, "", cmd);
 
     cmd.parse(argc, argv);
 
-    inputFile = inputFileArg.getValue();
+    inputFiles = inputFileArg.getValue();
     options.classNameMacro = className.getValue();
     options.enumNameMacro = enumName.getValue();
     options.functionNameMacro = functionName.getValue();
@@ -433,64 +430,75 @@ int main(int argc, char** argv)
   }
 
   // Open from file
-  std::ifstream t(inputFile);
-  if (!t.is_open())
-  {
-    std::cerr << "Could not open " << inputFile << std::endl;
-    return -1;
-  }
+  std::for_each
+		  (
+		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options](const std::string& inputFile)
+		   {
+			   std::ifstream t(inputFile);
+			   if (!t.is_open())
+			   {
+				   std::cerr << "Could not open " << inputFile << std::endl;
+				   return -1;
+			   }
 
-  std::stringstream buffer;
-  buffer << t.rdbuf();
+			   std::stringstream buffer;
+			   buffer << t.rdbuf();
 
-  Parser parser(options);
-  if (parser.Parse(buffer.str().c_str()))
-  {
-      std::filesystem::path path = inputFile;
-      path.replace_extension(".generated.h");
-      path = path.parent_path().parent_path() / "HeaderGenerated" / path.parent_path().stem() / path.filename();
+			   Parser parser(options);
+			   if (parser.Parse(buffer.str().c_str()))
+			   {
+				   std::filesystem::path path = inputFile;
+				   path.replace_extension(".generated.h");
+				   path = path.parent_path().parent_path() / "HeaderGenerated" / path.parent_path().stem() / path.
+				          filename();
 
-      if (!exists(path.parent_path())) 
-      {
-          std::cout << "Create directory " << path.parent_path() << std::endl;
-          create_directories(path.parent_path());
-      }
+				   if (!exists(path.parent_path()))
+				   {
+					   std::cout << "Create directory " << path.parent_path() << std::endl;
+					   create_directories(path.parent_path());
+				   }
 
-      std::fstream outputSteam(path.c_str(), std::ios::out);
+				   std::fstream outputSteam(path.c_str(), std::ios::out);
 
-      if (!outputSteam.is_open()) 
-      {
-          std::cerr << "Unable to create a file " << path << std::endl;
-          return -1;
-      }
+				   if (!outputSteam.is_open())
+				   {
+					   std::cerr << "Unable to create a file " << path << std::endl;
+					   return -1;
+                   }
 
-      outputStreamPtr = &outputSteam;
+				   std::cout << "== Start of " << path << " ==" << std::endl;
+				   std::cout << "Parsing json" << std::endl;
+				   rapidjson::Document document;
+				   document.Parse(parser.result().c_str());
+				   assert(document.IsArray());
 
-      std::cout << "== Start of " << path << " ==" << std::endl;
-      std::cout << "Parsing json" << std::endl;
-      rapidjson::Document document;
-      document.Parse(parser.result().c_str());
-      assert(document.IsArray());
+				   std::cout << parser.result().c_str() << std::endl;
 
-      std::cout << parser.result().c_str() << std::endl;
+				   try
+				   {
+					   std::string                   filename = path.filename().generic_string();
+					   std::vector<std::string_view> queue{};
 
-      try 
-      {
-          std::string filename = path.filename().generic_string();
-          
-          for (auto it = document.End() - 1; it != document.Begin() - 1; --it)
-          {
-              RecurseNamespace(filename, it, {});
-          }
-      }
-      catch (std::exception& e)
-      {
-          std::cerr << e.what() << std::endl;
-          outputSteam.close();
-      }
+					   for (auto it = document.End() - 1; it != document.Begin() - 1; --it)
+					   {
+						   queue.reserve(64);
+						   RecurseNamespace(outputSteam, filename, it, queue);
+						   queue.clear();
+					   }
+				   }
+				   catch (std::exception& e)
+				   {
+					   std::cerr << e.what() << std::endl;
+					   outputSteam.close();
+				   }
 
-      outputSteam.close();
-  }
+				   outputSteam.close();
+			   }
+
+            return 0;
+		   }
+		  );
+  
   
 	return 0;
 }
