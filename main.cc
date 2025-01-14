@@ -32,7 +32,7 @@ constexpr auto generatedHeaderFormat =
 "#endif\n"
 "#ifndef {0}_GENERATED_H\n"
 "#define {0}_GENERATED_H\n"
-"#include \"../Misc.h\"\n"
+"#include \"CoreType.h\"\n"
 "#include <array>\n"
 "#include <algorithm>\n"
 "#include <boost/serialization/export.hpp>\n"
@@ -122,6 +122,12 @@ constexpr auto registerBoostTypeAbstract =
 
 constexpr auto registerBoostTypeImpl =
 "BOOST_CLASS_EXPORT_IMPLEMENT({0}::{1})\n";
+
+constexpr auto registerBoostMetaType =
+"BOOST_CLASS_EXPORT_KEY(HashTypeT<{0}::{1}>)\n";
+
+constexpr auto registerBoostMetaTypeImpl =
+"BOOST_CLASS_EXPORT_IMPLEMENT(HashTypeT<{0}::{1}>)\n";
 
 //----------------------------------------------------------------------------------------------------
 std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClassNamespace, const std::string& baseClass)
@@ -345,6 +351,9 @@ void TestTags(const std::string_view fileName, const std::string_view joinedName
                 }
 
                 postGenerated << std::format(registerBoostTypeImpl, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+
+                staticsGenerated << std::format(registerBoostMetaType, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+                postGenerated << std::format(registerBoostMetaTypeImpl, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
             }
         }
         
