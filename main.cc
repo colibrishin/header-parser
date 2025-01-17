@@ -45,28 +45,28 @@ constexpr auto generatedHeaderFormat =
 
 constexpr auto bodyGenerationStaticPrefab =
 "public: typedef {1} Base;"
-"static std::string_view StaticTypeName()"
+"constexpr static std::string_view StaticTypeName()"
 "{{"
 "return static_type_name<{0}>::name();"
 "}}"
-"static std::string_view StaticFullTypeName()"
+"constexpr static std::string_view StaticFullTypeName()"
 "{{"
 "return static_type_name<{0}>::full_name();"
 "}}"
-"static HashType StaticTypeHash()"
+"constexpr static HashType StaticTypeHash()"
 "{{"
 "return &type_hash<{0}>::value;"
 "}}"
-"static bool StaticIsBaseOf(HashType hash)"
+"constexpr static bool StaticIsDerivedOf(HashType hash)"
 "{{"
-"return polymorphic_type_hash<{0}>::is_base_of(hash);"
+"return polymorphic_type_hash<{0}>::is_derived_of(hash);"
 "}} ";
 
 constexpr auto bodyGenerationOverridablePrefab = 
 "virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}"
 "virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}"
 "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
-"virtual bool IsBaseOf(HashType hash) const {{ return {0}::StaticIsBaseOf(hash); }} ";
+"virtual bool IsDerivedOf(HashType hash) const {{ return {0}::StaticIsDerivedOf(hash); }} ";
 
 constexpr auto bodyGenerationResourceGetterCreator =
 "template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
@@ -103,7 +103,7 @@ std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_
 std::ranges::sort(ret, [](const auto lhs, const auto rhs) {{return *lhs < *rhs;}});\
 return ret;\
 }}();\
-static bool is_base_of(const HashType hash) \
+constexpr static bool is_derived_of(const HashType hash) \
 {{ \
 if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7)) \
 {{ \
