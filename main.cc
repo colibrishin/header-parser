@@ -75,12 +75,15 @@ template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::R
 static Engine::Weak<{0}> GetByMetadataPath(const std::filesystem::path& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
 template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
 static Engine::Weak<{0}> GetByRawPath(const std::filesystem::path& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}\
-template <typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
+template <bool ForceLoad = false, typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
 static Engine::Strong<{0}> Create(const std::string_view name, Args&&... args)\
 {{\
 if (!name.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock()) {{ return {{}}; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...)); \
 Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
+if constexpr (ForceLoad) {{\
+obj->Load();\
+}}\
 return obj; \
 }} ";
 
