@@ -313,13 +313,16 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
         std::stringstream postGenerated;
 
     	bodyGenerated << std::format(bodyGenerationStaticPrefab, closureFullName, baseClosureNamespace + baseClosure);
-        bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
-        bodyGenerated << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClosureNamespace, baseClosure);
 
         std::string closureType;
         if ((*it)["isstruct"].GetBool() == true)
         {
             closureType = "struct";
+
+            if (it->HasMember("meta") && (*it)["meta"].HasMember("virtual"))
+            {
+                bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
+            }
         }
         else
         {
@@ -329,8 +332,12 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
             {
                 bodyGenerated << std::format(bodyGenerationResourceGetterCreator, closureName);
             }
+
+            bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
         }
 
+        bodyGenerated << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClosureNamespace, baseClosure);
+        
         staticsGenerated << std::format(staticForwardDeclaration, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureType, closureName);
 
         if (it->HasMember("meta"))
