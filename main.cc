@@ -75,11 +75,24 @@ template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::R
 static Engine::Weak<{0}> GetByMetadataPath(const std::filesystem::path& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
 template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
 static Engine::Weak<{0}> GetByRawPath(const std::filesystem::path& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}\
-template <bool ForceLoad = false, typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
+template <bool ForceLoad = false, typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}> && !std::is_constructible_v<{0}, const std::filesystem::path&, Args...>)\
 static Engine::Strong<{0}> Create(const std::string_view name, Args&&... args)\
 {{\
 if (!name.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock()) {{ return {{}}; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...)); \
+Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
+if constexpr (ForceLoad) {{\
+obj->Load();\
+}}\
+return obj; \
+}}\
+template <bool ForceLoad = false, typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}> && std::is_constructible_v<{0}, const std::filesystem::path&, Args...>)\
+static Engine::Strong<{0}> Create(const std::string_view name, const std::string_view raw_path, Args&&... args)\
+{{\
+if (const auto& name_wise = Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock(); !name.empty() && name_wise) {{\
+if (const auto& path_wise = Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(raw_path.data()).lock(); !raw_path.empty() && path_wise && name_wise == path_wise) {{return path_wise;}}\
+return {{}}; }}\
+const auto obj = boost::shared_ptr<{0}>(new {0}(raw_path.data(), std::forward<Args>(args)...));\
 Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
 if constexpr (ForceLoad) {{\
 obj->Load();\
