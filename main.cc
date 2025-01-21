@@ -34,6 +34,8 @@ constexpr auto generatedHeaderFormat =
 "#include \"CoreType.h\"\n"
 "#include <array>\n"
 "#include <algorithm>\n"
+"#include <type_traits>\n"
+"#include <filesystem>\n"
 "#include <boost/serialization/export.hpp>\n"
 "#include <boost/serialization/access.hpp>\n"
 "#ifdef GENERATE_BODY\n"
@@ -69,31 +71,41 @@ constexpr auto bodyGenerationOverridablePrefab =
 "virtual bool IsDerivedOf(HashType hash) const {{ return {0}::StaticIsDerivedOf(hash); }} ";
 
 constexpr auto bodyGenerationResourceGetterCreator =
-"template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
-static Engine::Weak<{0}> Get(const std::string & name) {{ return Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\
-template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
-static Engine::Weak<{0}> GetByMetadataPath(const std::filesystem::path& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
-template <typename Void = void> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>)\
-static Engine::Weak<{0}> GetByRawPath(const std::filesystem::path& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}\
-template <bool ForceLoad = false, typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}> && !std::is_constructible_v<{0}, const std::filesystem::path&, Args...>)\
-static Engine::Strong<{0}> Create(const std::string_view name, Args&&... args)\
+"template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::string_view, Name>)\
+static Engine::Weak<{0}> Get(const Name& name) {{ return Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\
+template <typename Void = void, typename MetaPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, MetaPath>)\
+static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
+template <typename Void = void, typename RawPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, RawPath>)\
+static Engine::Weak<{0}> GetByRawPath(const RawPath& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}\
+template <bool ForceLoad = false, typename Name, typename RawPath, typename... Args> requires (\
+std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
+std::is_constructible_v<std::string_view, Name>,\
+std::is_constructible_v<std::filesystem::path, RawPath>,\
+std::is_constructible_v<{0}, RawPath, Args...>)\
+static Engine::Strong<{0}> Create(const Name& name, const RawPath& raw_path, Args&&... args)\
 {{\
-if (!name.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock()) {{ return {{}}; }}\
-const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...)); \
-Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
+const std::string_view name_view(name);\
+const std::filesystem::path path_view(raw_path);\
+if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && name_wise) {{\
+if (const auto& path_wise = {0}::GetByRawPath(path_view).lock(); !path_view.empty() && path_wise && name_wise == path_wise) {{return path_wise;}}\
+return {{}}; }}\
+const auto obj = boost::shared_ptr<{0}>(new {0}(path_view, std::forward<Args>(args)...));\
+Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj); \
 if constexpr (ForceLoad) {{\
 obj->Load();\
 }}\
 return obj; \
 }}\
-template <bool ForceLoad = false, typename... Args> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}> && std::is_constructible_v<{0}, const std::filesystem::path&, Args...>)\
-static Engine::Strong<{0}> Create(const std::string_view name, const std::string_view raw_path, Args&&... args)\
+template <bool ForceLoad = false, typename Name, typename... Args> requires (\
+std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
+std::is_constructible_v<std::string_view, Name>,\
+!std::is_constructible_v<{0}, std::filesystem::path, Args...>)\
+static Engine::Strong<{0}> Create(const Name& name, Args&&... args)\
 {{\
-if (const auto& name_wise = Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name).lock(); !name.empty() && name_wise) {{\
-if (const auto& path_wise = Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(raw_path.data()).lock(); !raw_path.empty() && path_wise && name_wise == path_wise) {{return path_wise;}}\
-return {{}}; }}\
-const auto obj = boost::shared_ptr<{0}>(new {0}(raw_path.data(), std::forward<Args>(args)...));\
-Engine::Managers::ResourceManager::GetInstance().AddResource(name, obj); \
+const std::string_view name_view(name);\
+if (!name_view.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock()) {{ return {{}}; }}\
+const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...)); \
+Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj); \
 if constexpr (ForceLoad) {{\
 obj->Load();\
 }}\
