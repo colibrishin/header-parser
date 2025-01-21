@@ -67,7 +67,8 @@ constexpr auto bodyGenerationOverridablePrefab =
 "virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}"
 "virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}"
 "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
-"virtual bool IsDerivedOf(HashType hash) const {{ return {0}::StaticIsDerivedOf(hash); }} ";
+"virtual bool IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}"
+"virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}";
 
 constexpr auto bodyGenerationResourceGetterCreator =
 "template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::string_view, Name>)\
@@ -106,7 +107,9 @@ const std::string_view name_view(name);\
 if (!name_view.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock()) {{ return {{}}; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...));\
 Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
+if constexpr (is_serializable_v<{0}>) {{\
 Engine::Serializer::Serialize(obj->GetName(), obj);\
+}}\
 if constexpr (ForceLoad) {{\
 obj->Load();\
 }}\
@@ -132,20 +135,22 @@ std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_
 std::ranges::sort(ret, [](const auto lhs, const auto rhs) {{return *lhs < *rhs;}});\
 return ret;\
 }}();\
-constexpr static bool is_derived_of(const HashType hash) \
+constexpr static bool is_derived_of(const HashType base) \
 {{ \
 if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7)) \
 {{ \
-return std::ranges::find_if(upcast_array, [&hash](const auto other){{return hash->Equal(*other);}}) != upcast_array.end(); \
+return std::ranges::find_if(upcast_array, [&base](const auto other){{return base->Equal(*other);}}) != upcast_array.end(); \
 }} \
-return std::ranges::binary_search(upcast_array, hash, [](const auto lhs, const auto rhs){{return *lhs < *rhs;}}); \
+return std::ranges::binary_search(upcast_array, base, [](const auto lhs, const auto rhs){{return *lhs < *rhs;}}); \
 }} \
 }}; ";
 
 constexpr auto registerBoostType = 
+"template <> struct is_serializable<{0}::{1}> : public std::true_type {{}};\n"
 "BOOST_CLASS_EXPORT_KEY({0}::{1})\n";
 
 constexpr auto registerBoostTypeAbstract =
+"template <> struct is_serializable<{0}::{1}> : public std::true_type {{}};\n"
 "BOOST_SERIALIZATION_ASSUME_ABSTRACT({0}::{1})\n";
 
 constexpr auto registerBoostTypeImpl =
