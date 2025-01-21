@@ -12,7 +12,6 @@
 #include <stack>
 #include <vector>
 #include <unordered_set>
-#include <sstream>
 #include <execution>
 
 //----------------------------------------------------------------------------------------------------
@@ -90,7 +89,8 @@ if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && na
 if (const auto& path_wise = {0}::GetByRawPath(path_view).lock(); !path_view.empty() && path_wise && name_wise == path_wise) {{return path_wise;}}\
 return {{}}; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(path_view, std::forward<Args>(args)...));\
-Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj); \
+Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
+Engine::Serializer::Serialize(obj->GetName(), obj);\
 if constexpr (ForceLoad) {{\
 obj->Load();\
 }}\
@@ -104,8 +104,9 @@ static Engine::Strong<{0}> Create(const Name& name, Args&&... args)\
 {{\
 const std::string_view name_view(name);\
 if (!name_view.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock()) {{ return {{}}; }}\
-const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...)); \
-Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj); \
+const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...));\
+Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
+Engine::Serializer::Serialize(obj->GetName(), obj);\
 if constexpr (ForceLoad) {{\
 obj->Load();\
 }}\
