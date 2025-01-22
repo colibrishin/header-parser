@@ -117,7 +117,7 @@ return obj; \
 }} ";
 
 constexpr auto serializeInlineDeclStart =
-"friend class Engine::Serializer; friend class boost::serialization::access; private: template <class Archive> void serialize(Archive &ar, const unsigned int file_version) {";
+"friend class Engine::Serializer; friend class boost::serialization::access; private: template <class Archive> void serialize(Archive &ar, const unsigned int /*file_version*/) {";
 constexpr auto serializeBaseClassAr = "ar& boost::serialization::base_object<{0}>(*this); ";
 constexpr auto serializePropertyAr = "ar& {0}; ";
 constexpr auto serializeInlineDeclEnd = "} public: ";
@@ -143,24 +143,27 @@ return std::ranges::find_if(upcast_array, [&base](const auto other){{return base
 }} \
 return std::ranges::binary_search(upcast_array, base, [](const auto lhs, const auto rhs){{return *lhs < *rhs;}}); \
 }} \
-}}; ";
+}};\n";
+
+constexpr auto internalTraits =
+"template <> struct is_internal<{0}> : public std::true_type {{}};\n";
 
 constexpr auto registerBoostType = 
-"template <> struct is_serializable<{0}::{1}> : public std::true_type {{}};\n"
-"BOOST_CLASS_EXPORT_KEY({0}::{1})\n";
+"template <> struct is_serializable<{0}> : public std::true_type {{}};\n"
+"BOOST_CLASS_EXPORT_KEY({0})\n";
 
 constexpr auto registerBoostTypeAbstract =
-"template <> struct is_serializable<{0}::{1}> : public std::true_type {{}};\n"
-"BOOST_SERIALIZATION_ASSUME_ABSTRACT({0}::{1})\n";
+"template <> struct is_serializable<{0}> : public std::true_type {{}};\n"
+"BOOST_SERIALIZATION_ASSUME_ABSTRACT({0})\n";
 
 constexpr auto registerBoostTypeImpl =
-"BOOST_CLASS_EXPORT_IMPLEMENT({0}::{1})\n";
+"BOOST_CLASS_EXPORT_IMPLEMENT({0})\n";
 
 constexpr auto registerBoostMetaType =
-"BOOST_CLASS_EXPORT_KEY(HashTypeT<{0}::{1}>)\n";
+"BOOST_CLASS_EXPORT_KEY(HashTypeT<{0}>)\n";
 
 constexpr auto registerBoostMetaTypeImpl =
-"BOOST_CLASS_EXPORT_IMPLEMENT(HashTypeT<{0}::{1}>)\n";
+"BOOST_CLASS_EXPORT_IMPLEMENT(HashTypeT<{0}>)\n";
 
 //----------------------------------------------------------------------------------------------------
 std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClassNamespace, const std::string& baseClass)
@@ -375,23 +378,23 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
         {
             if ((*it)["meta"].HasMember("serialize"))
             {
-                if (it->HasMember("meta") && (*it)["meta"].HasMember("abstract"))
+                if ((*it)["meta"].HasMember("abstract"))
                 {
-                    staticsGenerated << std::format
-                        (
-                         registerBoostTypeAbstract, joinedNamespace.substr
-                         (0, joinedNamespace.size() - 2), closureName
-                        );
+                    staticsGenerated << std::format(registerBoostTypeAbstract, closureFullName);
                 }
                 else
                 {
-                    staticsGenerated << std::format(registerBoostType, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+                    staticsGenerated << std::format(registerBoostType, closureFullName);
                 }
+                postGenerated << std::format(registerBoostTypeImpl, closureFullName);
 
-                postGenerated << std::format(registerBoostTypeImpl, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+                staticsGenerated << std::format(registerBoostMetaType, closureFullName);
+                postGenerated << std::format(registerBoostMetaTypeImpl, closureFullName);
+            }
 
-                staticsGenerated << std::format(registerBoostMetaType, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
-                postGenerated << std::format(registerBoostMetaTypeImpl, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureName);
+            if ((*it)["meta"].HasMember("internal"))
+            {
+                staticsGenerated << std::format(internalTraits, closureFullName);
             }
         }
         
@@ -410,7 +413,7 @@ void RecurseNamespace(std::fstream& outputStream, const std::string_view fileNam
 
     if (ref["type"] == "namespace")
     {
-        currentNamespace.push_back(ref["name"].GetString());
+        currentNamespace.emplace_back(ref["name"].GetString());
 
         if (!ref["members"].Empty())
         {
