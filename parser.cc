@@ -289,6 +289,13 @@ bool Parser::ParseEnum(Token &startToken)
   // C++1x enum class type?
   bool isEnumClass = MatchIdentifier("class");
 
+  Token dllSpecToken;
+  if (GetSpecifier(dllSpecToken))
+  {
+      writer_.String("dllimport");
+      writer_.String(dllSpecToken.token.c_str());
+  }
+
   // Parse enum name
   Token enumToken;
   if (!GetIdentifier(enumToken))
@@ -698,22 +705,34 @@ bool Parser::ParseProperty(Token &token)
 
   // Parse array
   writer_.String("elements");
-  if (MatchSymbol("["))
+  
+  writer_.StartArray();
+  bool firstHit = true;
+  do
   {
-	  Token arrayToken;
-	  if(!GetConst(arrayToken))
-		  if(!GetIdentifier(arrayToken))
-			  throw; // Expected a property name
-	  writer_.String(arrayToken.token.c_str());
+      if (!MatchSymbol("["))
+      {
+          if (firstHit)
+              writer_.Null();
+          break;
+      }
+      firstHit = false;
 
-	  if(!MatchSymbol("]"))
-		  throw;
-  }
-  else
-  {
-	writer_.Null();
-  }
+      std::string propertyToken{};
+      do 
+      {
+          Token arrayToken;
+          if (!GetConst(arrayToken) && !GetIdentifier(arrayToken) && !GetSymbol(arrayToken))
+              throw; // Expected a property name
 
+          propertyToken += arrayToken.token;
+      } while (!MatchSymbol("]"));
+      
+      writer_.String(propertyToken.c_str());
+
+  } while (!MatchSymbol(";"));
+
+  writer_.EndArray();
   writer_.EndObject();
 
 
