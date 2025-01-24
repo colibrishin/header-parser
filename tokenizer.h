@@ -25,6 +25,8 @@ public:
   /// Parses an constant from the stream
   bool GetConst(Token& token);
 
+  bool GetSymbol(Token& token);
+
   /// Parses an identifier from the stream
   bool GetIdentifier(Token& token);
 

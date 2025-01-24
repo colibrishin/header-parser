@@ -449,6 +449,20 @@ bool Tokenizer::GetConst(Token &token)
 }
 
 //--------------------------------------------------------------------------------------------------
+
+bool Tokenizer::GetSymbol(Token& token)
+{
+	if (!GetToken(token))
+		return false;
+
+	if (token.tokenType == TokenType::kSymbol)
+		return true;
+
+	UngetToken(token);
+	return false;
+}
+
+//--------------------------------------------------------------------------------------------------
 bool Tokenizer::GetIdentifier(Token &token)
 {
   if(!GetToken(token))

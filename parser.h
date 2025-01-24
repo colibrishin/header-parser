@@ -40,11 +40,11 @@ public:
 protected:
   /// Called to parse the next statement. Returns false if there are no more statements.
   bool ParseStatement();
-  bool ParseDeclaration(Token &token);
+  bool ParseDeclaration(Token & token);
   bool ParseDirective();
-  bool SkipDeclaration(Token &token);
-  bool ParseProperty(Token &token);
-  bool ParseEnum(Token &token);
+  bool SkipDeclaration(Token & token);
+  bool ParseProperty(Token & token);
+  bool ParseEnum(Token & token);
   bool ParseMacroMeta();
   bool ParseMetaSequence();
 
