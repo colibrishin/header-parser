@@ -74,9 +74,7 @@ constexpr auto bodyGenerationResourceGetter =
 "template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::string_view, Name>)\
 static Engine::Weak<{0}> Get(const Name& name) {{ return Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\
 template <typename Void = void, typename MetaPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, MetaPath>)\
-static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
-template <typename Void = void, typename RawPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, RawPath>)\
-static Engine::Weak<{0}> GetByRawPath(const RawPath& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}";
+static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} ";
 
 constexpr auto bodyGenerationResourceCreator = 
 "template <bool ForceLoad = false, typename Name, typename RawPath, typename... Args> requires (\
@@ -89,8 +87,7 @@ static Engine::Strong<{0}> Create(const Name& name, const RawPath& raw_path, Arg
 const std::string_view name_view(name);\
 const std::filesystem::path path_view(raw_path);\
 if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && name_wise) {{\
-if (const auto& path_wise = {0}::GetByRawPath(path_view).lock(); !path_view.empty() && path_wise && name_wise == path_wise) {{return path_wise;}}\
-return {{}}; }}\
+return name_wise; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(path_view, std::forward<Args>(args)...));\
 Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
 Engine::Serializer::Serialize(obj->GetName(), obj);\
@@ -106,7 +103,7 @@ std::is_constructible_v<std::string_view, Name>,\
 static Engine::Strong<{0}> Create(const Name& name, Args&&... args)\
 {{\
 const std::string_view name_view(name);\
-if (!name_view.empty() && Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock()) {{ return {{}}; }}\
+if (const auto& name_wise = Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock(); !name_view.empty() && name_wise) {{ return name_wise; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...));\
 Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
 if constexpr (is_serializable_v<{0}>) {{\
