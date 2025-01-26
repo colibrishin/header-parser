@@ -167,6 +167,9 @@ constexpr auto registerBoostMetaType =
 constexpr auto registerBoostMetaTypeImpl =
 "BOOST_CLASS_EXPORT_IMPLEMENT(HashTypeT<{0}>)\n";
 
+constexpr auto resourceCloneDecl = "protected: RES_CLONE_DECL public: ";
+constexpr auto resourceCloneImpl = "RES_CLONE_IMPL( {0} )\n";
+
 //----------------------------------------------------------------------------------------------------
 std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClassNamespace, const std::string& baseClass)
 {
@@ -373,6 +376,8 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
                 if (!(*it)["meta"].HasMember("abstract"))
                 {
                     bodyGenerated << std::format(bodyGenerationResourceCreator, closureName);
+                    bodyGenerated << resourceCloneDecl;
+                    postGenerated << std::format(resourceCloneImpl, closureFullName);
                 }
             }
 
