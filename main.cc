@@ -77,7 +77,7 @@ template <typename Void = void, typename MetaPath> requires (std::is_base_of_v<E
 static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} ";
 
 constexpr auto bodyGenerationResourceCreator = 
-"template <bool ForceLoad = false, typename Name, typename RawPath, typename... Args> requires (\
+"template <typename Name, typename RawPath, typename... Args> requires (\
 std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
 std::is_constructible_v<std::string_view, Name>,\
 std::is_constructible_v<std::filesystem::path, RawPath>,\
@@ -90,13 +90,11 @@ if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && na
 return name_wise; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(path_view, std::forward<Args>(args)...));\
 Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
-Engine::Serializer::Serialize(obj->GetName(), obj);\
-if constexpr (ForceLoad) {{\
 obj->Load();\
-}}\
+Engine::Serializer::Serialize(obj->GetName(), obj);\
 return obj; \
 }}\
-template <bool ForceLoad = false, typename Name, typename... Args> requires (\
+template <typename Name, typename... Args> requires (\
 std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
 std::is_constructible_v<std::string_view, Name>,\
 !std::is_constructible_v<{0}, std::filesystem::path, Args...>)\
@@ -106,11 +104,9 @@ const std::string_view name_view(name);\
 if (const auto& name_wise = Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock(); !name_view.empty() && name_wise) {{ return name_wise; }}\
 const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...));\
 Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
+obj->Load();\
 if constexpr (is_serializable_v<{0}>) {{\
 Engine::Serializer::Serialize(obj->GetName(), obj);\
-}}\
-if constexpr (ForceLoad) {{\
-obj->Load();\
 }}\
 return obj; \
 }} ";
