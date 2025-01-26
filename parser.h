@@ -32,7 +32,7 @@ public:
   Parser(Parser&& other) = delete;
 
   // Parses the given input
-  bool Parse(const char* input);
+  bool Parse(const char* input, size_t length);
 
   /// Returns the result of a previous parse
   std::string result() const { return std::string(buffer_.GetString(), buffer_.GetString() + buffer_.GetSize()); }

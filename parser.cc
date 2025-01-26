@@ -136,11 +136,24 @@ Parser::~Parser()
 }
 
 //--------------------------------------------------------------------------------------------------
-bool Parser::Parse(const char *input)
+bool Parser::Parse(const char *input, const size_t length)
 {
-  // Pass the input to the tokenizer
-  Reset(input);
+  // Check BOM byte order mark. (TODO: endianness)
+  const char *fileStart = input;
 
+  if (length >= 3)
+  {
+    if (static_cast<const unsigned char>(input[0]) == 0xef &&
+      static_cast<const unsigned char>(input[1]) == 0xbb &&
+      static_cast<const unsigned char>(input[2]) == 0xbf)
+    {
+      fileStart += 3;
+    }
+  }
+  
+  // Pass the input to the tokenizer
+  Reset(fileStart);
+  
   // Start the array
   writer_.StartArray();
 

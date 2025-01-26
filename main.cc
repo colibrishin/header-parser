@@ -17,7 +17,7 @@
 //----------------------------------------------------------------------------------------------------
 void print_usage()
 {
-  std::cout << "Usage: inputFile" << std::endl;
+  std::cout << "Usage: inputFile" << '\n';
 }
 //----------------------------------------------------------------------------------------------------
 
@@ -70,14 +70,16 @@ constexpr auto bodyGenerationOverridablePrefab =
 "virtual bool IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}"
 "virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}";
 
-constexpr auto bodyGenerationResourceGetterCreator =
+constexpr auto bodyGenerationResourceGetter =
 "template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::string_view, Name>)\
 static Engine::Weak<{0}> Get(const Name& name) {{ return Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\
 template <typename Void = void, typename MetaPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, MetaPath>)\
 static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} \
 template <typename Void = void, typename RawPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, RawPath>)\
-static Engine::Weak<{0}> GetByRawPath(const RawPath& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}\
-template <bool ForceLoad = false, typename Name, typename RawPath, typename... Args> requires (\
+static Engine::Weak<{0}> GetByRawPath(const RawPath& path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByRawPath<{0}>(path); }}";
+
+constexpr auto bodyGenerationResourceCreator = 
+"template <bool ForceLoad = false, typename Name, typename RawPath, typename... Args> requires (\
 std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
 std::is_constructible_v<std::string_view, Name>,\
 std::is_constructible_v<std::filesystem::path, RawPath>,\
@@ -186,8 +188,8 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
     {
         if ((*it)["type"] == "property")
         {
-            std::cout << "Found property " << (*it)["name"].GetString() << std::endl;
-            propertyNames.push_back((*it)["name"].GetString());
+            std::cout << "Found property " << (*it)["name"].GetString() << '\n';
+            propertyNames.emplace_back((*it)["name"].GetString());
         }
     }
 
@@ -218,11 +220,12 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
 
         const size_t classSuffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
 
-        std::cout << std::format("base class scope: {}, class scope: {}, suffix offset: {}", baseClassScope, classScope, classSuffixOffset) << std::endl;
+        std::cout << std::format("base class scope: {}, class scope: {}, suffix offset: {}", baseClassScope, classScope, classSuffixOffset) <<
+            '\n';
 
         if (baseClassScope == classScope)
         {
-            std::cout << "Use class namespace..." << std::endl;
+            std::cout << "Use class namespace..." << '\n';
             // root namescope is same but other than that, every namespaces are different.
             return;
         }
@@ -240,7 +243,7 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
         }
         else
         {
-            std::cout << "Append to class namespace..." << std::endl;
+            std::cout << "Append to class namespace..." << '\n';
 	        outBaseClassNamespace.insert(outBaseClassNamespace.begin(), joinedNamespace.begin(), joinedNamespace.end());
             return;
         }
@@ -251,13 +254,13 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
         // If namespace is one, merge with class namespace.
         if (parentScopeBegin == std::string::npos)
         {
-            std::cout << "Class has one namespace, merging..." << std::endl;
+            std::cout << "Class has one namespace, merging..." << '\n';
             outBaseClassNamespace.insert(outBaseClassNamespace.begin(), { ':', ':'});
             outBaseClassNamespace.insert(outBaseClassNamespace.begin(), joinedNamespace.begin(), joinedNamespace.end());
             return;
         }
 
-        std::cout << "Remove the nearest namespace and appending..." << std::endl;
+        std::cout << "Remove the nearest namespace and appending..." << '\n';
         const std::string_view parentScope = joinedNamespace.substr(0, parentScopeBegin);
         outBaseClassNamespace.insert(outBaseClassNamespace.begin(), { ':', ':' });
         outBaseClassNamespace.insert(outBaseClassNamespace.begin(), parentScope.begin(), parentScope.end());
@@ -296,7 +299,8 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
                 if (std::string_view thisArg = (*arg)["name"].GetString();
                     closureName == thisArg && thisArg.rfind("::") == std::string::npos)
                 {
-                    std::cout << "Found class name in the argument, with no namespaces. Append the class namespace..." << std::endl;
+                    std::cout << "Found class name in the argument, with no namespaces. Append the class namespace..." <<
+                        '\n';
                     argumentStream << std::format("{}{}{}", joinedNamespace, (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
                 }
                 else
@@ -306,7 +310,7 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
             }
             argumentStream << '>';
 
-            std::cout << "Found template arguments " << argumentStream.str() << std::endl;
+            std::cout << "Found template arguments " << argumentStream.str() << '\n';
             outBaseClosure += argumentStream.str();
         }
 
@@ -332,7 +336,7 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
     if ((*it)["type"] == "class")
     {
         const std::string closureName = (*it)["name"].GetString();
-        std::cout << "Reading closure " << closureName << std::endl;
+        std::cout << "Reading closure " << closureName << '\n';
         std::string baseClosure;
         std::string baseClosureNamespace;
         bool        isNativeBaseClass = ReconstructBaseClosureAndNamespace
@@ -340,7 +344,7 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
 
         std::string closureFullName(joinedNamespace.begin(), joinedNamespace.end());
         closureFullName += closureName;
-        std::cout << "Closure parsed with " << closureName << " and " << baseClosureNamespace << baseClosure << std::endl;
+        std::cout << "Closure parsed with " << closureName << " and " << baseClosureNamespace << baseClosure << '\n';
 
         std::stringstream bodyGenerated;
         std::stringstream staticsGenerated;
@@ -364,7 +368,12 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
 
             if (it->HasMember("meta") && ((*it)["meta"]).HasMember("resource"))
             {
-                bodyGenerated << std::format(bodyGenerationResourceGetterCreator, closureName);
+                bodyGenerated << std::format(bodyGenerationResourceGetter, closureName);
+                
+                if (!(*it)["meta"].HasMember("abstract"))
+                {
+                    bodyGenerated << std::format(bodyGenerationResourceCreator, closureName);
+                }
             }
 
             bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
@@ -431,7 +440,7 @@ void RecurseNamespace(std::fstream& outputStream, const std::string_view fileNam
                     joinedNamespace += std::format("{}{}", identifier, "::");
                 }
 
-                std::cout << "Test header tags with namespace " << joinedNamespace << std::endl;
+                std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
                 TestTags(outputStream, fileName, joinedNamespace, it);
             }
         }
@@ -469,7 +478,7 @@ int main(int argc, char** argv)
   }
   catch (TCLAP::ArgException& e)
   {
-    std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl;
+    std::cerr << "error: " << e.error() << " for arg " << e.argId() << '\n';
     return -1;
   }
 
@@ -481,7 +490,7 @@ int main(int argc, char** argv)
 			   std::ifstream t(inputFile);
 			   if (!t.is_open())
 			   {
-				   std::cerr << "Could not open " << inputFile << std::endl;
+				   std::cerr << "Could not open " << inputFile << '\n';
 				   return -1;
 			   }
 
@@ -489,7 +498,7 @@ int main(int argc, char** argv)
 			   buffer << t.rdbuf();
 
 			   Parser parser(options);
-			   if (parser.Parse(buffer.str().c_str()))
+			   if (parser.Parse(buffer.str().c_str(), buffer.str().size()))
 			   {
 				   std::filesystem::path path = inputFile;
 				   path.replace_extension(".generated.h");
@@ -498,7 +507,7 @@ int main(int argc, char** argv)
 
 				   if (!exists(path.parent_path()))
 				   {
-					   std::cout << "Create directory " << path.parent_path() << std::endl;
+					   std::cout << "Create directory " << path.parent_path() << '\n';
 					   create_directories(path.parent_path());
 				   }
 
@@ -506,17 +515,17 @@ int main(int argc, char** argv)
 
 				   if (!outputSteam.is_open())
 				   {
-					   std::cerr << "Unable to create a file " << path << std::endl;
+					   std::cerr << "Unable to create a file " << path << '\n';
 					   return -1;
                    }
 
-				   std::cout << "== Start of " << path << " ==" << std::endl;
-				   std::cout << "Parsing json" << std::endl;
+				   std::cout << "== Start of " << path << " ==" << '\n';
+				   std::cout << "Parsing json" << '\n';
 				   rapidjson::Document document;
 				   document.Parse(parser.result().c_str());
 				   assert(document.IsArray());
 
-				   std::cout << parser.result().c_str() << std::endl;
+				   std::cout << parser.result().c_str() << '\n';
 
 				   try
 				   {
@@ -532,7 +541,7 @@ int main(int argc, char** argv)
 				   }
 				   catch (std::exception& e)
 				   {
-					   std::cerr << e.what() << std::endl;
+					   std::cerr << e.what() << '\n';
 					   outputSteam.close();
 				   }
 
