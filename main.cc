@@ -449,7 +449,7 @@ void RecurseNamespace(std::fstream& outputStream, const std::string_view fileNam
 int main(int argc, char** argv)
 {
   Options options;
-  std::vector<std::string> inputFiles;
+  std::string inputFile;
   try
   {
     using namespace TCLAP;
@@ -462,11 +462,11 @@ int main(int argc, char** argv)
     MultiArg<std::string> functionName("f", "function", "The name of the function macro", false, "", cmd);
     ValueArg<std::string> propertyName("p", "property", "The name of the property macro", false, "PROPERTY", "", cmd);
     MultiArg<std::string> customMacro("m", "macro", "Custom macro names to parse", false, "", cmd);
-    UnlabeledMultiArg<std::string> inputFileArg("inputFile", "The file to process", true, "", cmd);
+    UnlabeledValueArg<std::string> inputFileArg("inputFile", "The file to process", true, "", "", cmd);
 
     cmd.parse(argc, argv);
 
-    inputFiles = inputFileArg.getValue();
+    inputFile = inputFileArg.getValue();
     options.classNameMacro = className.getValue();
     options.enumNameMacro = enumName.getValue();
     options.functionNameMacro = functionName.getValue();
@@ -478,6 +478,21 @@ int main(int argc, char** argv)
   {
     std::cerr << "error: " << e.error() << " for arg " << e.argId() << '\n';
     return -1;
+  }
+
+  std::ifstream t(inputFile);
+  if (!t.is_open())
+  {
+      std::cerr << "Could not open " << inputFile << '\n';
+      return -1;
+  }
+
+  std::vector<std::string> inputFiles;
+
+  std::string readLine;
+  while (std::getline(t, readLine))
+  {
+      inputFiles.emplace_back(readLine);
   }
 
   // Open from file
