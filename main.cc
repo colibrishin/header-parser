@@ -480,8 +480,8 @@ int main(int argc, char** argv)
     return -1;
   }
 
-  std::ifstream t(inputFile);
-  if (!t.is_open())
+  std::ifstream inputBundle(inputFile);
+  if (!inputBundle.is_open())
   {
       std::cerr << "Could not open " << inputFile << '\n';
       return -1;
@@ -490,7 +490,7 @@ int main(int argc, char** argv)
   std::vector<std::string> inputFiles;
 
   std::string readLine;
-  while (std::getline(t, readLine))
+  while (std::getline(inputBundle, readLine))
   {
       inputFiles.emplace_back(readLine);
   }
@@ -498,12 +498,12 @@ int main(int argc, char** argv)
   // Open from file
   std::for_each
 		  (
-		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options](const std::string& inputFile)
+		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options](const std::string& fileName)
 		   {
-			   std::ifstream t(inputFile);
+			   std::ifstream t(fileName);
 			   if (!t.is_open())
 			   {
-				   std::cerr << "Could not open " << inputFile << '\n';
+				   std::cerr << "Could not open " << fileName << '\n';
 				   return -1;
 			   }
 
@@ -513,7 +513,7 @@ int main(int argc, char** argv)
 			   Parser parser(options);
 			   if (parser.Parse(buffer.str().c_str(), buffer.str().size()))
 			   {
-				   std::filesystem::path path = inputFile;
+				   std::filesystem::path path = fileName;
 				   path.replace_extension(".generated.h");
 				   path = path.parent_path().parent_path() / "HeaderGenerated" / path.parent_path().stem() / path.
 				          filename();
