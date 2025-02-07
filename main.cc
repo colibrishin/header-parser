@@ -20,6 +20,7 @@
 
 #include "bodygeneration_macro.h"
 #include "postpone_macro.h"
+#include "dependency_template.h"
 
 //----------------------------------------------------------------------------------------------------
 
@@ -48,6 +49,23 @@ static std::string DropFirstDirectory(const std::filesystem::path& path)
 
     const size_t& firstSeperator = srcPathStr.find_first_of(L'/');
     return { srcPathStr.begin() + firstSeperator + 1, srcPathStr.end() };
+}
+
+static std::string GetFirstDirectory(const std::filesystem::path& path)
+{
+    std::string srcPathStr = path.generic_string();
+    std::transform(srcPathStr.begin(), srcPathStr.end(), srcPathStr.begin(), [](const char c)
+        {
+            if (c == '\\')
+            {
+                return '/';
+            }
+
+            return c;
+        });
+
+    const size_t& firstSeperator = srcPathStr.find_first_of(L'/');
+    return { srcPathStr.begin(), srcPathStr.begin() + firstSeperator };
 }
 
 static std::wstring GetFirstDirectoryW(const std::filesystem::path& path)
@@ -85,6 +103,9 @@ std::priority_queue<std::pair<size_t, std::function<void()>>, std::vector<std::p
 
 std::mutex bufferedDocumentsLock;
 std::vector<std::shared_ptr<rapidjson::Document>> bufferedDocuments;
+
+std::mutex dependenciesLocks;
+std::unordered_map<std::string, std::vector<std::string>> dependencies;
 
 //----------------------------------------------------------------------------------------------------
 
@@ -361,7 +382,7 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
     return isNativeBaseClass;
 }
 
-void TestTags(const std::filesystem::path& filePath, std::fstream& outputStream, const std::string_view joinedNamespace, const rapidjson::Value* it, const bool reEntry)
+void TestTags(const std::string_view buildConfigurationName, const std::filesystem::path& filePath, std::fstream& outputStream, const std::string_view joinedNamespace, const rapidjson::Value* it, const bool reEntry)
 {
     if ((*it)["type"] == "class")
     {
@@ -395,6 +416,20 @@ void TestTags(const std::filesystem::path& filePath, std::fstream& outputStream,
                     bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
                 }
 
+                if ((*it)["meta"].HasMember("module"))
+                {
+                    std::cout << "Module found, writing the dependencies\n";
+                    std::stringstream dependencyStream;
+
+                    for (const std::string& dependency : dependencies[GetFirstDirectory(filePath)])
+                    {
+                        dependencyStream << '"' << dependency << '"' << ',';
+                    }
+
+                    bodyGenerated << moduleBodyGenerationDecl;
+                    postGenerated << std::format(moduleBodyGenerationDef, closureFullName, dependencyStream.str());
+                }
+
                 if ((*it)["meta"].HasMember("clientModule"))
                 {
                     if (!reEntry) 
@@ -403,7 +438,17 @@ void TestTags(const std::filesystem::path& filePath, std::fstream& outputStream,
                     }
                     else 
                     {
-                        bodyGenerated << std::format(generatedClientModuleDecl);
+                        std::cout << "Module found, writing the dependencies\n";
+                        std::stringstream dependencyStream;
+
+                        for (const std::string& dependency : dependencies[GetFirstDirectory(filePath)])
+                        {
+                            dependencyStream << '"' << dependency << '"' << ',';
+                        }
+
+                        bodyGenerated << moduleBodyGenerationDecl;
+                        bodyGenerated << generatedClientModuleDecl;
+                        postGenerated << std::format(moduleBodyGenerationDef, closureFullName, dependencyStream.str());
                         postGenerated << std::format("#include \"{0}\"\n", scriptTrackingMacroedFileName);
                         postGenerated << std::format(generatedClientModuleImpl, closureFullName);
                         UpdateScriptLists(filePath);
@@ -485,7 +530,7 @@ void TestTags(const std::filesystem::path& filePath, std::fstream& outputStream,
     }
 }
 
-void RecurseNamespace(const std::filesystem::path& filePath, std::fstream& outputStream, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace, const bool reEntry)
+void RecurseNamespace(const std::string_view buildConfigurationName, const std::filesystem::path& filePath, std::fstream& outputStream, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace, const bool reEntry)
 {
     const rapidjson::Value& ref = *root;
 
@@ -499,7 +544,7 @@ void RecurseNamespace(const std::filesystem::path& filePath, std::fstream& outpu
             {
                 if ((*it)["type"] == "namespace")
                 {
-                    RecurseNamespace(filePath, outputStream, it, currentNamespace, reEntry);
+                    RecurseNamespace(buildConfigurationName, filePath, outputStream, it, currentNamespace, reEntry);
                     continue;
                 }
 
@@ -510,7 +555,7 @@ void RecurseNamespace(const std::filesystem::path& filePath, std::fstream& outpu
                 }
 
                 std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
-                TestTags(filePath, outputStream, joinedNamespace, it, reEntry);
+                TestTags(buildConfigurationName, filePath, outputStream, joinedNamespace, it, reEntry);
             }
         }
     }
@@ -523,7 +568,7 @@ void RecurseNamespace(const std::filesystem::path& filePath, std::fstream& outpu
         }
 
         std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
-        TestTags(filePath, outputStream, joinedNamespace, root, reEntry);
+        TestTags(buildConfigurationName, filePath, outputStream, joinedNamespace, root, reEntry);
     }
 }
 
@@ -532,6 +577,7 @@ int main(int argc, char** argv)
 {
   Options options;
   std::string inputFile;
+  std::string buildConfigurationName;
   try
   {
     using namespace TCLAP;
@@ -545,6 +591,7 @@ int main(int argc, char** argv)
     ValueArg<std::string> propertyName("p", "property", "The name of the property macro", false, "PROPERTY", "", cmd);
     MultiArg<std::string> customMacro("m", "macro", "Custom macro names to parse", false, "", cmd);
     UnlabeledValueArg<std::string> inputFileArg("inputFile", "The file to process", true, "", "", cmd);
+    ValueArg<std::string> buildName("b", "build", "The name of the build configuration", true, "", "", cmd);
 
     cmd.parse(argc, argv);
 
@@ -555,6 +602,7 @@ int main(int argc, char** argv)
     options.customMacros = customMacro.getValue();
     options.propertyNameMacro = propertyName.getValue();
     options.constructorNameMacro = constructorName.getValue();
+    buildConfigurationName = buildName.getValue();
   }
   catch (TCLAP::ArgException& e)
   {
@@ -580,7 +628,7 @@ int main(int argc, char** argv)
   // Open from file
   std::for_each
 		  (
-		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options](const std::string& filePath)
+		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options, &buildConfigurationName](const std::string& filePath)
 		   {
 			   std::ifstream t(filePath);
 			   if (!t.is_open())
@@ -588,6 +636,29 @@ int main(int argc, char** argv)
 				   std::cerr << "Could not open " << filePath << '\n';
 				   return -1;
 			   }
+
+               {
+                   const std::string subDirectory = GetFirstDirectory(filePath);
+                   std::filesystem::path dependencyFileName = subDirectory;
+                   dependencyFileName /= (buildConfigurationName + ".dep");
+                   std::ifstream dependencyFile(dependencyFileName.generic_string());
+
+                   if (!dependencyFile.is_open())
+                   {
+                       std::cerr << "Could not open " << dependencyFileName << '\n';
+                       return -1;
+                   }
+
+                   std::lock_guard lock(dependenciesLocks);
+                   if (!dependencies.contains(subDirectory))
+                   {
+                       std::string readLine;
+                       while (std::getline(dependencyFile, readLine))
+                       {
+                           dependencies[subDirectory].push_back(readLine);
+                       }
+                   }
+               }
 
 			   std::stringstream buffer;
 			   buffer << t.rdbuf();
@@ -630,7 +701,7 @@ int main(int argc, char** argv)
 						   queue.reserve(64);
                            try 
                            {
-                               RecurseNamespace(srcPath, outputStream, it, queue, false);
+                               RecurseNamespace(buildConfigurationName, srcPath, outputStream, it, queue, false);
                            }
                            catch (postpone_exception& e)
                            {
@@ -644,7 +715,7 @@ int main(int argc, char** argv)
 
                                {
                                    std::lock_guard lock(postponedFunctionsLock);
-                                   postponedFunctions.push({ e.GetPriority(), [srcPath, it]()
+                                   postponedFunctions.push({ e.GetPriority(), [srcPath, it, &buildConfigurationName]()
                                        {
                                            std::vector<std::string_view> queue{};
                                            queue.reserve(64);
@@ -655,7 +726,7 @@ int main(int argc, char** argv)
                                                stream = std::move(movedStream.at(srcPath));
                                            }
 
-                                           RecurseNamespace(srcPath, stream, it, queue, true);
+                                           RecurseNamespace(buildConfigurationName.c_str(), srcPath, stream, it, queue, true);
 
                                            if (stream.is_open())
                                            {
