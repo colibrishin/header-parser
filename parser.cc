@@ -389,10 +389,16 @@ bool Parser::ParseMacroMeta()
 {
   writer_.String("meta");
 
-  if (!RequireSymbol("("))
-    return false;
-  if (!ParseMetaSequence())
-    return false;
+  if (MatchSymbol("("))
+  {
+      if (!ParseMetaSequence())
+          return false;
+  }
+  else 
+  {
+      writer_.StartObject();
+      writer_.EndObject();
+  }
 
   // Possible ;
   MatchSymbol(";");
@@ -653,8 +659,8 @@ bool Parser::ParseClass(Token &token)
   PushScope(classNameToken.token, ScopeType::kClass, isStruct ? AccessControlType::kPublic : AccessControlType::kPrivate);
 
   while (!MatchSymbol("}"))
-    if (!ParseStatement())
-      return false;
+      if (!ParseStatement())
+          break;
 
   PopScope();
 

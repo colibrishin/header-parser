@@ -2,6 +2,7 @@
 #include "handler.h"
 #include "options.h"
 #include <tclap/CmdLine.h>
+#include <regex>
 
 #include <rapidjson/document.h>
 
@@ -13,6 +14,181 @@
 #include <vector>
 #include <unordered_set>
 #include <execution>
+#include <functional>
+#include <set>
+#include <cwctype>
+
+#include "bodygeneration_macro.h"
+#include "postpone_macro.h"
+
+//----------------------------------------------------------------------------------------------------
+
+struct GreaterComparer
+{
+    bool operator()(const std::pair<size_t, std::function<void()>>& lhs, const std::pair<size_t, std::function<void()>>& rhs)
+    {
+        return std::greater<size_t>{}(std::get<0>(lhs), std::get<0>(rhs));
+    }
+};
+
+//----------------------------------------------------------------------------------------------------
+
+static std::string DropFirstDirectory(const std::filesystem::path& path) 
+{
+    std::string srcPathStr = path.generic_string();
+    std::transform(srcPathStr.begin(), srcPathStr.end(), srcPathStr.begin(), [](const char c)
+        {
+            if (c == '\\')
+            {
+                return '/';
+            }
+
+            return c;
+        });
+
+    const size_t& firstSeperator = srcPathStr.find_first_of(L'/');
+    return { srcPathStr.begin() + firstSeperator + 1, srcPathStr.end() };
+}
+
+static std::wstring GetFirstDirectoryW(const std::filesystem::path& path)
+{
+    std::wstring srcPathWstr = path.generic_wstring();
+    std::transform(srcPathWstr.begin(), srcPathWstr.end(), srcPathWstr.begin(), [](const wchar_t c)
+        {
+            if (c == L'\\')
+            {
+                return L'/';
+            }
+
+            return c;
+        });
+
+    const size_t& firstSeperator = srcPathWstr.find_first_of(L'/');
+    return { srcPathWstr.begin(), srcPathWstr.begin() + firstSeperator };
+}
+
+static std::filesystem::path GetDestinationPath(std::filesystem::path srcPath)
+{
+    const std::wstring subDirectory = GetFirstDirectoryW(srcPath);
+    const auto& dstPath = std::filesystem::path("HeaderGenerated") / subDirectory / srcPath.replace_extension(".generated.h").filename();
+
+    return dstPath;
+}
+
+//----------------------------------------------------------------------------------------------------
+
+std::mutex movedStreamLock;
+std::unordered_map<std::filesystem::path, std::fstream> movedStream;
+
+std::mutex postponedFunctionsLock;
+std::priority_queue<std::pair<size_t, std::function<void()>>, std::vector<std::pair<size_t, std::function<void()>>>, GreaterComparer> postponedFunctions;
+
+std::mutex bufferedDocumentsLock;
+std::vector<std::shared_ptr<rapidjson::Document>> bufferedDocuments;
+
+//----------------------------------------------------------------------------------------------------
+
+constexpr auto scriptTrackingMacroedFileName = "_script_tracking.generated.h";
+constexpr auto scriptTrackingListFileName = "_script_tracking.generated";
+
+struct FileNameComparer
+{
+    bool operator()(const std::pair<std::string, std::filesystem::path>& lhs, const std::pair<std::string, std::filesystem::path>& rhs) const
+    {
+        return std::less<std::string>{}(lhs.first, rhs.first);
+    }
+};
+
+
+std::mutex trackingScriptListsLock;
+std::set<std::pair<std::string, std::filesystem::path>, FileNameComparer> trackingScriptLists;
+
+static void UpdateScriptLists(const std::filesystem::path& moduleFilePath) 
+{
+    const std::filesystem::path& subDirectoryOfDst = GetDestinationPath(moduleFilePath).parent_path();
+
+    {
+        std::ifstream trackingScriptBundle(subDirectoryOfDst / scriptTrackingListFileName);
+
+        if (trackingScriptBundle.is_open())
+        {
+            std::cout << "Reading from previously generated script list file\n";
+            
+            while (!trackingScriptBundle.eof())
+            {
+                std::string scriptFullName;
+                std::filesystem::path scriptPath;
+
+                trackingScriptBundle >> scriptFullName;
+                trackingScriptBundle >> scriptPath;
+
+                if (!scriptFullName.empty() && !scriptPath.empty())
+                {
+                    trackingScriptLists.emplace(scriptFullName, scriptPath);
+                }
+            }
+
+            trackingScriptBundle.close();
+        }
+    }
+
+    {
+        std::ofstream trackingScriptMacroGeneratedFile(subDirectoryOfDst / scriptTrackingMacroedFileName);
+        if (!trackingScriptMacroGeneratedFile)
+        {
+            std::cerr << "Could not create the script tracking macro file" << '\n';
+            return;
+        }
+
+        std::stringstream scriptInclusionStream;
+        std::stringstream registerMacroStream;
+        std::stringstream unregisterMacroStream;
+
+        for (const auto& scriptName : trackingScriptLists)
+        {
+            scriptInclusionStream << std::format("#include \"{0}\"\n", DropFirstDirectory(scriptName.second));
+            registerMacroStream << std::format(scriptRegistration, scriptName.first);
+            unregisterMacroStream << std::format(scriptUnregistration, scriptName.first);
+        }
+
+        trackingScriptMacroGeneratedFile << std::format(scriptRegistrationBody, scriptInclusionStream.str(), registerMacroStream.str(), unregisterMacroStream.str());
+        trackingScriptMacroGeneratedFile.close();
+        std::cout << "Script tracking macro file has been generated\n";
+    }
+
+    {
+        std::ofstream trackingScriptBundle(subDirectoryOfDst / scriptTrackingListFileName, std::ios::trunc);
+        if (!trackingScriptBundle.is_open())
+        {
+            std::cerr << "Unable to open the generated script macro file\n";
+            return;
+        }
+
+        for (const auto& scriptName : trackingScriptLists)
+        {
+            trackingScriptBundle << scriptName.first << "\n";
+            trackingScriptBundle << scriptName.second << "\n";
+        }
+
+        trackingScriptBundle.close();
+    }
+}
+
+//----------------------------------------------------------------------------------------------------
+
+class postpone_exception 
+{
+public:
+    postpone_exception(const size_t inPriority) : priority(inPriority) {};
+
+    size_t GetPriority() const 
+    {
+        return priority;
+    }
+
+private:
+    size_t priority;
+};
 
 //----------------------------------------------------------------------------------------------------
 void print_usage()
@@ -20,148 +196,6 @@ void print_usage()
   std::cout << "Usage: inputFile" << '\n';
 }
 //----------------------------------------------------------------------------------------------------
-
-constexpr auto generatedHeaderFormat = 
-"#ifdef {0}_GENERATED_H\n"
-"#ifndef POST_{0}_H\n"
-"#define POST_{0}_H\n"
-"{3}\n"
-"#endif\n"
-"#endif\n"
-"#ifndef {0}_GENERATED_H\n"
-"#define {0}_GENERATED_H\n"
-"#include \"CoreType.h\"\n"
-"#include <array>\n"
-"#include <algorithm>\n"
-"#include <type_traits>\n"
-"#include <filesystem>\n"
-"#include <boost/serialization/export.hpp>\n"
-"#include <boost/serialization/access.hpp>\n"
-"#ifdef GENERATE_BODY\n"
-"#undef GENERATE_BODY\n"
-"#endif\n"
-"#define GENERATE_BODY {1}\n"
-"{2}\n"
-"#endif\n";
-
-constexpr auto bodyGenerationStaticPrefab =
-"public: typedef {1} Base;"
-"constexpr static std::string_view StaticTypeName()"
-"{{"
-"return static_type_name<{0}>::name();"
-"}}"
-"constexpr static std::string_view StaticFullTypeName()"
-"{{"
-"return static_type_name<{0}>::full_name();"
-"}}"
-"constexpr static HashType StaticTypeHash()"
-"{{"
-"return &type_hash<{0}>::value;"
-"}}"
-"constexpr static bool StaticIsDerivedOf(HashType hash)"
-"{{"
-"return polymorphic_type_hash<{0}>::is_derived_of(hash);"
-"}} ";
-
-constexpr auto bodyGenerationOverridablePrefab = 
-"virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}"
-"virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}"
-"virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}"
-"virtual bool IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}"
-"virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}";
-
-constexpr auto bodyGenerationResourceGetter =
-"template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::string_view, Name>)\
-static Engine::Weak<{0}> Get(const Name& name) {{ return Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\
-template <typename Void = void, typename MetaPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, std::is_constructible_v<std::filesystem::path, MetaPath>)\
-static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }} ";
-
-constexpr auto bodyGenerationResourceCreator = 
-"template <typename Name, typename RawPath, typename... Args> requires (\
-std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
-std::is_constructible_v<std::string_view, Name>,\
-std::is_constructible_v<std::filesystem::path, RawPath>,\
-std::is_constructible_v<{0}, RawPath, Args...>)\
-static Engine::Strong<{0}> Create(const Name& name, const RawPath& raw_path, Args&&... args)\
-{{\
-const std::string_view name_view(name);\
-const std::filesystem::path path_view(raw_path);\
-if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && name_wise) {{\
-return name_wise; }}\
-const auto obj = boost::shared_ptr<{0}>(new {0}(path_view, std::forward<Args>(args)...));\
-Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
-obj->Load();\
-Engine::Serializer::Serialize(obj->GetName(), obj);\
-return obj; \
-}}\
-template <typename Name, typename... Args> requires (\
-std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\
-std::is_constructible_v<std::string_view, Name>,\
-!std::is_constructible_v<{0}, std::filesystem::path, Args...>)\
-static Engine::Strong<{0}> Create(const Name& name, Args&&... args)\
-{{\
-const std::string_view name_view(name);\
-if (const auto& name_wise = Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock(); !name_view.empty() && name_wise) {{ return name_wise; }}\
-const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...));\
-Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\
-obj->Load();\
-if constexpr (is_serializable_v<{0}>) {{\
-Engine::Serializer::Serialize(obj->GetName(), obj);\
-}}\
-return obj; \
-}} ";
-
-constexpr auto serializeInlineDeclStart =
-"friend class Engine::Serializer; friend class boost::serialization::access; private: template <class Archive> void serialize(Archive &ar, const unsigned int /*file_version*/) {";
-constexpr auto serializeBaseClassAr = "ar& boost::serialization::base_object<{0}>(*this); ";
-constexpr auto serializePropertyAr = "ar& {0}; ";
-constexpr auto serializeInlineDeclEnd = "} public: ";
-
-constexpr auto staticForwardDeclaration = "namespace {0} {{{1} {2};}}\n";
-
-constexpr auto staticTypePrefab =
-"template <> struct polymorphic_type_hash<{0}>\
-{{\
-static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;\
-static constexpr auto upcast_array = []\
-{{\
-HashArray<upcast_count> ret{{&type_hash<{0}>::value}};\
-std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);\
-std::ranges::sort(ret, [](const auto lhs, const auto rhs) {{return *lhs < *rhs;}});\
-return ret;\
-}}();\
-constexpr static bool is_derived_of(const HashType base) \
-{{ \
-if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7)) \
-{{ \
-return std::ranges::find_if(upcast_array, [&base](const auto other){{return base->Equal(*other);}}) != upcast_array.end(); \
-}} \
-return std::ranges::binary_search(upcast_array, base, [](const auto lhs, const auto rhs){{return *lhs < *rhs;}}); \
-}} \
-}};\n";
-
-constexpr auto internalTraits =
-"template <> struct is_internal<{0}> : public std::true_type {{}};\n";
-
-constexpr auto registerBoostType = 
-"template <> struct is_serializable<{0}> : public std::true_type {{}};\n"
-"BOOST_CLASS_EXPORT_KEY({0})\n";
-
-constexpr auto registerBoostTypeAbstract =
-"template <> struct is_serializable<{0}> : public std::true_type {{}};\n"
-"BOOST_SERIALIZATION_ASSUME_ABSTRACT({0})\n";
-
-constexpr auto registerBoostTypeImpl =
-"BOOST_CLASS_EXPORT_IMPLEMENT({0})\n";
-
-constexpr auto registerBoostMetaType =
-"BOOST_CLASS_EXPORT_KEY(HashTypeT<{0}>)\n";
-
-constexpr auto registerBoostMetaTypeImpl =
-"BOOST_CLASS_EXPORT_IMPLEMENT(HashTypeT<{0}>)\n";
-
-constexpr auto resourceCloneDecl = "protected: RES_CLONE_DECL public: ";
-constexpr auto resourceCloneImpl = "RES_CLONE_IMPL( {0} )\n";
 
 //----------------------------------------------------------------------------------------------------
 std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool isNativeBaseClass, const std::string& baseClassNamespace, const std::string& baseClass)
@@ -327,7 +361,7 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
     return isNativeBaseClass;
 }
 
-void TestTags(std::fstream& outputStream, const std::string_view fileName, const std::string_view joinedNamespace, const rapidjson::Value* it)
+void TestTags(const std::filesystem::path& filePath, std::fstream& outputStream, const std::string_view joinedNamespace, const rapidjson::Value* it, const bool reEntry)
 {
     if ((*it)["type"] == "class")
     {
@@ -343,19 +377,38 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
         std::cout << "Closure parsed with " << closureName << " and " << baseClosureNamespace << baseClosure << '\n';
 
         std::stringstream bodyGenerated;
+        std::stringstream additionalHeaders;
         std::stringstream staticsGenerated;
         std::stringstream postGenerated;
 
-    	bodyGenerated << std::format(bodyGenerationStaticPrefab, closureFullName, baseClosureNamespace + baseClosure);
+        bodyGenerated << std::format(bodyGenerationStaticPrefab, closureFullName, baseClosureNamespace + baseClosure);
 
         std::string closureType;
         if ((*it)["isstruct"].GetBool() == true)
         {
             closureType = "struct";
 
-            if (it->HasMember("meta") && (*it)["meta"].HasMember("virtual"))
+            if (it->HasMember("meta"))
             {
-                bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
+                if ((*it)["meta"].HasMember("virtual")) 
+                {
+                    bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
+                }
+
+                if ((*it)["meta"].HasMember("clientModule"))
+                {
+                    if (!reEntry) 
+                    {
+                        throw postpone_exception(1 << 2);
+                    }
+                    else 
+                    {
+                        bodyGenerated << std::format(generatedClientModuleDecl);
+                        postGenerated << std::format("#include \"{0}\"\n", scriptTrackingMacroedFileName);
+                        postGenerated << std::format(generatedClientModuleImpl, closureFullName);
+                        UpdateScriptLists(filePath);
+                    }
+                }
             }
         }
         else
@@ -374,12 +427,30 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
                 }
             }
 
+            if (it->HasMember("meta") && (*it)["meta"].HasMember("script")) 
+            {
+                if (!(*it)["meta"].HasMember("abstract"))
+                {
+                    std::lock_guard lock(trackingScriptListsLock);
+                    bodyGenerated << scriptCloneDecl;
+                    postGenerated << std::format(scriptCloneImpl, closureFullName);
+                    trackingScriptLists.emplace(closureFullName, filePath);
+                }
+            }
+
             bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
         }
 
         bodyGenerated << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClosureNamespace, baseClosure);
         
-        staticsGenerated << std::format(staticForwardDeclaration, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureType, closureName);
+        if (joinedNamespace.empty()) 
+        {
+            staticsGenerated << std::format(staticForwardDeclarationWithoutNamespace, closureType, closureName);
+        }
+        else 
+        {
+            staticsGenerated << std::format(staticForwardDeclaration, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureType, closureName);
+        }
 
         if (it->HasMember("meta"))
         {
@@ -410,25 +481,25 @@ void TestTags(std::fstream& outputStream, const std::string_view fileName, const
         std::string nameUpperString = closureName;
         std::ranges::transform(nameUpperString, nameUpperString.begin(), [](const char& c){return std::toupper(c);});
         
-        outputStream << std::format(generatedHeaderFormat, nameUpperString, bodyGenerated.str(), staticsGenerated.str(), postGenerated.str());
+        outputStream << std::format(generatedHeaderFormat, nameUpperString, bodyGenerated.str(), staticsGenerated.str(), postGenerated.str(), additionalHeaders.str());
     }
 }
 
-void RecurseNamespace(std::fstream& outputStream, const std::string_view fileName, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace)
+void RecurseNamespace(const std::filesystem::path& filePath, std::fstream& outputStream, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace, const bool reEntry)
 {
     const rapidjson::Value& ref = *root;
 
     if (ref["type"] == "namespace")
     {
         currentNamespace.emplace_back(ref["name"].GetString());
-
+        
         if (!ref["members"].Empty())
         {
             for (auto it = ref["members"].End() - 1; it != ref["members"].Begin() - 1; --it)
             {
                 if ((*it)["type"] == "namespace")
                 {
-                    RecurseNamespace(outputStream, fileName, it, currentNamespace);
+                    RecurseNamespace(filePath, outputStream, it, currentNamespace, reEntry);
                     continue;
                 }
 
@@ -439,9 +510,20 @@ void RecurseNamespace(std::fstream& outputStream, const std::string_view fileNam
                 }
 
                 std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
-                TestTags(outputStream, fileName, joinedNamespace, it);
+                TestTags(filePath, outputStream, joinedNamespace, it, reEntry);
             }
         }
+    }
+    else 
+    {
+        std::string joinedNamespace;
+        for (const std::string_view& identifier : currentNamespace)
+        {
+            joinedNamespace += std::format("{}{}", identifier, "::");
+        }
+
+        std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
+        TestTags(filePath, outputStream, joinedNamespace, root, reEntry);
     }
 }
 
@@ -498,12 +580,12 @@ int main(int argc, char** argv)
   // Open from file
   std::for_each
 		  (
-		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options](const std::string& fileName)
+		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options](const std::string& filePath)
 		   {
-			   std::ifstream t(fileName);
+			   std::ifstream t(filePath);
 			   if (!t.is_open())
 			   {
-				   std::cerr << "Could not open " << fileName << '\n';
+				   std::cerr << "Could not open " << filePath << '\n';
 				   return -1;
 			   }
 
@@ -513,58 +595,115 @@ int main(int argc, char** argv)
 			   Parser parser(options);
 			   if (parser.Parse(buffer.str().c_str(), buffer.str().size()))
 			   {
-				   std::filesystem::path path = fileName;
-				   path.replace_extension(".generated.h");
-				   path = path.parent_path().parent_path() / "HeaderGenerated" / path.parent_path().stem() / path.
-				          filename();
-
-				   if (!exists(path.parent_path()))
+                   const std::filesystem::path srcPath = filePath;
+                   const std::filesystem::path& dstPath = GetDestinationPath(srcPath);
+                   std::cout << dstPath << "\n";
+				   if (!exists(dstPath.parent_path()))
 				   {
-					   std::cout << "Create directory " << path.parent_path() << '\n';
-					   create_directories(path.parent_path());
+					   std::cout << "Create directory " << dstPath.parent_path() << '\n';
+					   create_directories(dstPath.parent_path());
 				   }
 
-				   std::fstream outputSteam(path.c_str(), std::ios::out);
+				   std::fstream outputStream(dstPath.c_str(), std::ios::out);
 
-				   if (!outputSteam.is_open())
+				   if (!outputStream.is_open())
 				   {
-					   std::cerr << "Unable to create a file " << path << '\n';
+					   std::cerr << "Unable to create a file " << dstPath << '\n';
 					   return -1;
                    }
 
-				   std::cout << "== Start of " << path << " ==" << '\n';
+				   std::cout << "== Start of " << dstPath << " ==" << '\n';
 				   std::cout << "Parsing json" << '\n';
-				   rapidjson::Document document;
-				   document.Parse(parser.result().c_str());
-				   assert(document.IsArray());
+				   std::shared_ptr<rapidjson::Document> document = std::make_shared<rapidjson::Document>();
+				   document->Parse(parser.result().c_str());
+				   assert(document->IsArray());
 
 				   std::cout << parser.result().c_str() << '\n';
 
 				   try
 				   {
-					   std::string                   filename = path.filename().generic_string();
+                       bool                          postponeTriggered = false;
 					   std::vector<std::string_view> queue{};
 
-					   for (auto it = document.End() - 1; it != document.Begin() - 1; --it)
+					   for (auto it = document->End() - 1; it != document->Begin() - 1; --it)
 					   {
 						   queue.reserve(64);
-						   RecurseNamespace(outputSteam, filename, it, queue);
+                           try 
+                           {
+                               RecurseNamespace(srcPath, outputStream, it, queue, false);
+                           }
+                           catch (postpone_exception& e)
+                           {
+                               postponeTriggered = true;
+                               std::cout << "Postpone caught\n";
+
+                               {
+                                   std::lock_guard documentLock(bufferedDocumentsLock);
+                                   bufferedDocuments.emplace_back(document);
+                               }
+
+                               {
+                                   std::lock_guard lock(postponedFunctionsLock);
+                                   postponedFunctions.push({ e.GetPriority(), [srcPath, it]()
+                                       {
+                                           std::vector<std::string_view> queue{};
+                                           queue.reserve(64);
+                                           std::fstream stream;
+
+                                           {
+                                               std::lock_guard lock(movedStreamLock);
+                                               stream = std::move(movedStream.at(srcPath));
+                                           }
+
+                                           RecurseNamespace(srcPath, stream, it, queue, true);
+
+                                           if (stream.is_open())
+                                           {
+                                               stream.close();
+                                           }
+                                       } });
+                               }
+                           }
 						   queue.clear();
 					   }
+
+                       if (postponeTriggered)
+                       {
+                           std::lock_guard lock(movedStreamLock);
+                           movedStream[filePath] = std::move(outputStream);
+                       }
 				   }
 				   catch (std::exception& e)
 				   {
 					   std::cerr << e.what() << '\n';
-					   outputSteam.close();
+                       if (outputStream.is_open())
+                       {
+                           outputStream.close();
+                       }
 				   }
 
-				   outputSteam.close();
+                   if (outputStream.is_open())
+                   {
+                       outputStream.close();
+                   }
 			   }
 
             return 0;
 		   }
 		  );
-  
+
+
+    if (!postponedFunctions.empty())
+    {
+        std::cout << "Process remaining postponed\n";
+
+        while (!postponedFunctions.empty())
+        {
+            const auto func = postponedFunctions.top();
+            postponedFunctions.pop();
+            func.second();
+        }
+    }
   
 	return 0;
 }
