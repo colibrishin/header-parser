@@ -56,8 +56,8 @@ constexpr auto resourceCloneImpl = "RES_CLONE_IMPL( {0} )\n";
 constexpr auto objectCloneDecl = "protected: OBJ_CLONE_DECL public: ";
 constexpr auto objectCloneImpl = "OBJ_CLONE_IMPL( {0} )\n";
 
-constexpr auto scriptCloneDecl = "protected: SCRIPT_CLONE_DECL public: ";
-constexpr auto scriptCloneImpl = "SCRIPT_CLONE_IMPL( {0} )\n";
+constexpr auto componentCloneDecl = "protected: COMP_CLONE_DECL public: ";
+constexpr auto componentCloneImpl = "COMP_CLONE_IMPL( {0} )\n";
 
 constexpr auto serializeInlineDeclStart =
 "friend class Engine::Serializer; friend class boost::serialization::access; private: template <class Archive> void serialize(Archive &ar, const unsigned int /*file_version*/) {";
