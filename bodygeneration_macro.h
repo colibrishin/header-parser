@@ -53,6 +53,9 @@ constexpr auto internalTraits =
 constexpr auto resourceCloneDecl = "protected: RES_CLONE_DECL public: ";
 constexpr auto resourceCloneImpl = "RES_CLONE_IMPL( {0} )\n";
 
+constexpr auto objectCloneDecl = "protected: OBJ_CLONE_DECL public: ";
+constexpr auto objectCloneImpl = "OBJ_CLONE_IMPL( {0} )\n";
+
 constexpr auto scriptCloneDecl = "protected: SCRIPT_CLONE_DECL public: ";
 constexpr auto scriptCloneImpl = "SCRIPT_CLONE_IMPL( {0} )\n";
 

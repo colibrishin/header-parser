@@ -112,6 +112,9 @@ std::unordered_map<std::string, std::vector<std::string>> dependencies;
 constexpr auto scriptTrackingMacroedFileName = "_script_tracking.generated.h";
 constexpr auto scriptTrackingListFileName = "_script_tracking.generated";
 
+constexpr auto objectTrackingMacroedFileName = "_object_tracking.generated.h";
+constexpr auto objectTrackingListFileName = "_object_tracking.generated";
+
 struct FileNameComparer
 {
     bool operator()(const std::pair<std::string, std::filesystem::path>& lhs, const std::pair<std::string, std::filesystem::path>& rhs) const
@@ -120,78 +123,107 @@ struct FileNameComparer
     }
 };
 
+enum class TrackingType
+{
+    Unknown,
+    Script,
+    Object
+};
 
 std::mutex trackingScriptListsLock;
 std::set<std::pair<std::string, std::filesystem::path>, FileNameComparer> trackingScriptLists;
 
-static void UpdateScriptLists(const std::filesystem::path& moduleFilePath) 
+std::mutex trackingObjectListsLock;
+std::set<std::pair<std::string, std::filesystem::path>, FileNameComparer> trackingObjectLists;
+
+template <TrackingType TrackingT>
+constexpr std::string_view GetRegistriationFormat()
+{
+    if constexpr (TrackingT == TrackingType::Script)
+    {
+        return scriptRegistrationBody;
+    }
+    else if (TrackingT == TrackingType::Object)
+    {
+        return objectRegistrationBody;
+    }
+
+    throw std::logic_error("Unknown tracking type");
+}
+
+template <TrackingType TrackingT>
+static void UpdateLists(
+    const char* trackingListFileName, 
+    const char* trackingOutputFileName,
+    const std::set<std::pair<std::string, std::filesystem::path>, FileNameComparer>& trackingList,
+    const std::filesystem::path& moduleFilePath)
 {
     const std::filesystem::path& subDirectoryOfDst = GetDestinationPath(moduleFilePath).parent_path();
 
     {
-        std::ifstream trackingScriptBundle(subDirectoryOfDst / scriptTrackingListFileName);
+        std::ifstream trackingBundle(subDirectoryOfDst / trackingListFileName);
 
-        if (trackingScriptBundle.is_open())
+        if (trackingBundle.is_open())
         {
             std::cout << "Reading from previously generated script list file\n";
-            
-            while (!trackingScriptBundle.eof())
+
+            while (!trackingBundle.eof())
             {
-                std::string scriptFullName;
-                std::filesystem::path scriptPath;
+                std::string fullName;
+                std::filesystem::path path;
 
-                trackingScriptBundle >> scriptFullName;
-                trackingScriptBundle >> scriptPath;
+                trackingBundle >> fullName;
+                trackingBundle >> path;
 
-                if (!scriptFullName.empty() && !scriptPath.empty())
+                if (!fullName.empty() && !path.empty())
                 {
-                    trackingScriptLists.emplace(scriptFullName, scriptPath);
+                    trackingScriptLists.emplace(fullName, path);
                 }
             }
 
-            trackingScriptBundle.close();
+            trackingBundle.close();
         }
     }
 
     {
-        std::ofstream trackingScriptMacroGeneratedFile(subDirectoryOfDst / scriptTrackingMacroedFileName);
-        if (!trackingScriptMacroGeneratedFile)
+        std::ofstream trackingMacroGeneratedFile(subDirectoryOfDst / trackingOutputFileName);
+        if (!trackingMacroGeneratedFile)
         {
             std::cerr << "Could not create the script tracking macro file" << '\n';
             return;
         }
 
-        std::stringstream scriptInclusionStream;
+        std::stringstream InclusionStream;
         std::stringstream registerMacroStream;
         std::stringstream unregisterMacroStream;
 
-        for (const auto& scriptName : trackingScriptLists)
+        for (const auto& name : trackingList)
         {
-            scriptInclusionStream << std::format("#include \"{0}\"\n", DropFirstDirectory(scriptName.second));
-            registerMacroStream << std::format(scriptRegistration, scriptName.first);
-            unregisterMacroStream << std::format(scriptUnregistration, scriptName.first);
+            InclusionStream << std::format("#include \"{0}\"\n", DropFirstDirectory(name.second));
+            registerMacroStream << std::format(scriptRegistration, name.first);
+            unregisterMacroStream << std::format(scriptUnregistration, name.first);
         }
 
-        trackingScriptMacroGeneratedFile << std::format(scriptRegistrationBody, scriptInclusionStream.str(), registerMacroStream.str(), unregisterMacroStream.str());
-        trackingScriptMacroGeneratedFile.close();
-        std::cout << "Script tracking macro file has been generated\n";
+        trackingMacroGeneratedFile << std::format(GetRegistriationFormat<TrackingT>(), InclusionStream.str(), registerMacroStream.str(), unregisterMacroStream.str());
+        trackingMacroGeneratedFile.close();
+        std::cout << "tracking macro file has been generated\n";
     }
 
     {
-        std::ofstream trackingScriptBundle(subDirectoryOfDst / scriptTrackingListFileName, std::ios::trunc);
-        if (!trackingScriptBundle.is_open())
+        std::ofstream trackingBundle(subDirectoryOfDst / trackingListFileName, std::ios::trunc);
+        if (!trackingBundle.is_open())
         {
-            std::cerr << "Unable to open the generated script macro file\n";
+            std::cerr << "Unable to open the generated tracking file\n";
             return;
         }
 
-        for (const auto& scriptName : trackingScriptLists)
+        for (const auto& pair : trackingList)
         {
-            trackingScriptBundle << scriptName.first << "\n";
-            trackingScriptBundle << scriptName.second << "\n";
+            trackingBundle << pair.first << "\n";
+            trackingBundle << pair.second << "\n";
         }
 
-        trackingScriptBundle.close();
+        trackingBundle.close();
     }
 }
 
@@ -450,8 +482,17 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                         bodyGenerated << generatedClientModuleDecl;
                         postGenerated << std::format(moduleBodyGenerationDef, closureFullName, dependencyStream.str());
                         postGenerated << std::format("#include \"{0}\"\n", scriptTrackingMacroedFileName);
+                        postGenerated << std::format("#include \"{0}\"\n", objectTrackingMacroedFileName);
                         postGenerated << std::format(generatedClientModuleImpl, closureFullName);
-                        UpdateScriptLists(filePath);
+                        
+                        {
+                            std::lock_guard l(trackingScriptListsLock);
+                            UpdateLists<TrackingType::Script>(scriptTrackingListFileName, scriptTrackingMacroedFileName, trackingScriptLists, filePath);
+                        }
+                        {
+                            std::lock_guard l(trackingObjectListsLock);
+                            UpdateLists<TrackingType::Object>(objectTrackingListFileName, objectTrackingMacroedFileName, trackingObjectLists, filePath);
+                        }
                     }
                 }
             }
@@ -460,27 +501,41 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
         {
             closureType = "class";
 
-            if (it->HasMember("meta") && ((*it)["meta"]).HasMember("resource"))
+            if (it->HasMember("meta"))
             {
-                bodyGenerated << std::format(bodyGenerationResourceGetter, closureName);
-                
-                if (!(*it)["meta"].HasMember("abstract"))
+                if (((*it)["meta"]).HasMember("resource")) 
                 {
-                    bodyGenerated << std::format(bodyGenerationResourceCreator, closureName);
-                    bodyGenerated << resourceCloneDecl;
-                    postGenerated << std::format(resourceCloneImpl, closureFullName);
-                }
-            }
+                    bodyGenerated << std::format(bodyGenerationResourceGetter, closureName);
 
-            if (it->HasMember("meta") && (*it)["meta"].HasMember("script")) 
-            {
-                if (!(*it)["meta"].HasMember("abstract"))
-                {
-                    std::lock_guard lock(trackingScriptListsLock);
-                    bodyGenerated << scriptCloneDecl;
-                    postGenerated << std::format(scriptCloneImpl, closureFullName);
-                    trackingScriptLists.emplace(closureFullName, filePath);
+                    if (!(*it)["meta"].HasMember("abstract"))
+                    {
+                        bodyGenerated << std::format(bodyGenerationResourceCreator, closureName);
+                        bodyGenerated << resourceCloneDecl;
+                        postGenerated << std::format(resourceCloneImpl, closureFullName);
+                    }
                 }
+
+                if ((*it)["meta"].HasMember("script"))
+                {
+                    if (!(*it)["meta"].HasMember("abstract"))
+                    {
+                        std::lock_guard lock(trackingScriptListsLock);
+                        bodyGenerated << scriptCloneDecl;
+                        postGenerated << std::format(scriptCloneImpl, closureFullName);
+                        trackingScriptLists.emplace(closureFullName, filePath);
+                    }
+                }
+
+                if ((*it)["meta"].HasMember("object"))
+                {
+                    if (!(*it)["meta"].HasMember("abstract"))
+                    {
+                        std::lock_guard lock(trackingObjectListsLock);
+                        bodyGenerated << objectCloneDecl;
+                        postGenerated << std::format(objectCloneDecl, closureFullName);
+                        trackingObjectLists.emplace(closureFullName, filePath);
+                    }
+                }   
             }
 
             bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
