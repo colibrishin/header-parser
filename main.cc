@@ -599,7 +599,7 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                     if (!meta_flag.HasMember("abstract"))
                     {
                         bodyGenerated << objectCloneDecl;
-                        postGenerated << std::format(objectCloneDecl, closureFullName);
+                        postGenerated << std::format(objectCloneImpl, closureFullName);
                         if (!meta_flag["object"].IsNull() &&
                             !std::strcmp(meta_flag["object"].GetString(), "client"))
                         {
