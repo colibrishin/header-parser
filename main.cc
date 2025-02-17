@@ -613,8 +613,6 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
 
             bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
         }
-
-        bodyGenerated << GenerateSerializationDeclaration(it, isNativeBaseClass, baseClosureNamespace, baseClosure);
         
         if (joinedNamespace.empty()) 
         {
@@ -629,6 +627,9 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
         {
             if ((*it)["meta"].HasMember("serialize"))
             {
+                bodyGenerated << GenerateSerializationDeclaration(
+                        it, isNativeBaseClass, baseClosureNamespace, baseClosure );
+
                 if ((*it)["meta"].HasMember("abstract"))
                 {
                     staticsGenerated << std::format(registerBoostTypeAbstract, closureFullName);
