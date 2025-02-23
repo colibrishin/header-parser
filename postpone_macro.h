@@ -2,7 +2,7 @@
 
 constexpr std::string_view componentRegistrationBody =
 "#pragma once\n"
-"#include \"Component/Public/Component.h\"\n"
+"#include \"Component.h\"\n"
 "{0}\n"
 "#undef CLIENT_COMPONENT_REGISTRATION\n"
 "#undef CLIENT_COMPONENT_UNREGISTRATION\n"
@@ -19,7 +19,7 @@ constexpr std::string_view componentUnregistration = "Engine::ComponentFactory::
 
 constexpr std::string_view objectRegistrationBody =
 "#pragma once\n"
-"#include \"ObjectBase/Public/ObjectBase.h\"\n"
+"#include \"ObjectBase.h\"\n"
 "{0}\n"
 "#undef CLIENT_OBJECT_REGISTRATION\n"
 "#undef CLIENT_OBJECT_UNREGISTRATION\n"
@@ -31,7 +31,7 @@ constexpr std::string_view objectUnregistration = "Engine::ObjectFactory::Unregi
 
 constexpr std::string_view resourceRegistrationBody =
 "#pragma once\n"
-"#include \"Resource/Public/Resource.h\"\n"
+"#include \"Resource.h\"\n"
 "{0}\n"
 "#undef CLIENT_RESOURCE_REGISTRATION\n"
 "#undef CLIENT_RESOURCE_UNREGISTRATION\n"
