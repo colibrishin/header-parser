@@ -493,12 +493,14 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
 
             if (it->HasMember("meta"))
             {
-                if ((*it)["meta"].HasMember("virtual")) 
+                const auto& meta_flag = (*it)["meta"];
+
+                if ( meta_flag.HasMember( "virtual" ) )
                 {
-                    bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
+                    bodyGenerated << std::format( bodyGenerationOverridablePrefab, closureName );
                 }
 
-                if ((*it)["meta"].HasMember("module"))
+                if (meta_flag.HasMember("module"))
                 {
                     std::cout << "Module found, writing the dependencies\n";
                     std::stringstream dependencyStream;
@@ -512,7 +514,7 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                     postGenerated << std::format(bodyGenerationModuleImpl, closureFullName, dependencyStream.str());
                 }
 
-                if ((*it)["meta"].HasMember("clientModule"))
+                if (meta_flag.HasMember("clientModule"))
                 {
                     if (!reEntry) 
                     {
