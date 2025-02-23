@@ -9,7 +9,7 @@ constexpr std::string_view componentRegistrationBody =
 "#define CLINET_COMPONENT_REGISTRATION {1}\n"
 "#define CLINET_COMPONENT_UNREGISTRATION {2}";
 
-constexpr std::string_view generatedClientModuleDecl = "void GeneratedInitialize() override; void GeneratedShutdown() override;";
+constexpr std::string_view generatedClientModuleDecl = "void GeneratedInitialize() override; void GeneratedShutdown() override;\\\n";
 constexpr std::string_view generatedClientModuleImpl = 
 "void {0}::GeneratedInitialize() {{ CLINET_COMPONENT_REGISTRATION CLINET_OBJECT_REGISTRATION CLINET_RESOURCE_REGISTRATION }} "
 "void {0}::GeneratedShutdown() {{ CLINET_COMPONENT_UNREGISTRATION CLINET_OBJECT_UNREGISTRATION CLINET_RESOURCE_UNREGISTRATION }}";

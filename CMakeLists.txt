@@ -10,6 +10,9 @@ SET(SOURCES
   "parser.cc"
   "parser.h"
   "type_node.h"
+  "dependency_template.h"
+  "postpone_macro.h"
+  "bodygeneration_macro.h"
   )
 
 INCLUDE_DIRECTORIES(

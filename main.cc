@@ -478,8 +478,9 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
         closureFullName += closureName;
         std::cout << "Closure parsed with " << closureName << " and " << baseClosureNamespace << baseClosure << '\n';
 
-        std::stringstream bodyGenerated;
         std::stringstream additionalHeaders;
+        std::stringstream bodyGenerated;
+        std::stringstream bodyForStaticGenerated;
         std::stringstream staticsGenerated;
         std::stringstream postGenerated;
 
@@ -507,8 +508,8 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                         dependencyStream << '"' << dependency << '"' << ',';
                     }
 
-                    bodyGenerated << moduleBodyGenerationDecl;
-                    postGenerated << std::format(moduleBodyGenerationDef, closureFullName, dependencyStream.str());
+                    bodyGenerated << bodyGenerationModuleDecl;
+                    postGenerated << std::format(bodyGenerationModuleImpl, closureFullName, dependencyStream.str());
                 }
 
                 if ((*it)["meta"].HasMember("clientModule"))
@@ -526,10 +527,10 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                         {
                             dependencyStream << '"' << dependency << '"' << ',';
                         }
-
-                        bodyGenerated << moduleBodyGenerationDecl;
+                        
                         bodyGenerated << generatedClientModuleDecl;
-                        postGenerated << std::format(moduleBodyGenerationDef, closureFullName, dependencyStream.str());
+                        bodyGenerated << bodyGenerationModuleDecl;
+                        postGenerated << std::format(bodyGenerationModuleImpl, closureFullName, dependencyStream.str());
                         postGenerated << std::format("#include \"{0}\"\n", componentTrackingMacroedFileName);
                         postGenerated << std::format("#include \"{0}\"\n", objectTrackingMacroedFileName);
                         postGenerated << std::format("#include \"{0}\"\n", resourceTrackingMacroedFileName);
@@ -655,7 +656,7 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
         std::string nameUpperString = closureName;
         std::ranges::transform(nameUpperString, nameUpperString.begin(), [](const char& c){return std::toupper(c);});
         
-        outputStream << std::format(generatedHeaderFormat, nameUpperString, bodyGenerated.str(), staticsGenerated.str(), postGenerated.str(), additionalHeaders.str());
+        outputStream << std::format(generatedHeaderFormat, nameUpperString, postGenerated.str(), additionalHeaders.str(), bodyGenerated.str(), bodyForStaticGenerated.str(), staticsGenerated.str());
     }
 }
 
