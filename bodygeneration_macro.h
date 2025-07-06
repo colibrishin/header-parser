@@ -38,24 +38,24 @@ constexpr auto staticForwardDeclaration = "namespace {0} {{{1} {2};}}\n";
 constexpr auto staticForwardDeclarationWithoutNamespace = "{0} {1};\n";
 
 constexpr auto staticTypePrefab =
-"template <> struct polymorphic_type_hash<{0}>\
-{{\
-static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;\
-static constexpr auto upcast_array = []\
-{{\
-HashArray<upcast_count> ret{{&type_hash<{0}>::value}};\
-std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);\
-std::ranges::sort(ret, [](const auto lhs, const auto rhs) {{return *lhs < *rhs;}});\
-return ret;\
-}}();\
-constexpr static bool is_derived_of(const HashType base) \
-{{ \
-if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7)) \
-{{ \
-return std::ranges::find_if(upcast_array, [&base](const auto other){{return base->Equal(*other);}}) != upcast_array.end(); \
-}} \
-return std::ranges::binary_search(upcast_array, base, [](const auto lhs, const auto rhs){{return *lhs < *rhs;}}); \
-}} \
+"template <> struct polymorphic_type_hash<{0}>\n\
+{{\n\
+static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;\n\
+static constexpr auto upcast_array = []\n\
+{{\n\
+HashArray<upcast_count> ret{{&type_hash<{0}>::value}};\n\
+std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);\n\
+std::ranges::sort(ret, [](const HashType lhs, const HashType rhs) {{return *lhs < *rhs;}});\n\
+return ret;\n\
+}}();\n\
+constexpr static bool is_derived_of(const HashType base)\n\
+{{\n\
+if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7))\n\
+{{\n\
+return std::ranges::find_if(upcast_array, [&base](const HashType other){{return base->Equal(*other);}}) != upcast_array.end();\n\
+}}\n\
+return std::ranges::binary_search(upcast_array, base, [](const HashType lhs, const HashType rhs){{return *lhs < *rhs;}});\n\
+}}\n\
 }};\n";
 
 constexpr auto internalTraits =
@@ -79,7 +79,8 @@ constexpr auto serializeBaseClassAr = "ar& boost::serialization::base_object<{0}
 constexpr auto serializePropertyAr = "ar& {0};\\\n";
 constexpr auto serializeInlineDeclEnd = "} public:\\\n";
 
-constexpr auto bodyGenerationStaticPrefab = "public: typedef {1} Base;\\\n"
+constexpr auto bodyGenerationStaticPrefab = "friend struct ConstructorAccess;\\\n"
+                                            "public: typedef {1} Base;\\\n"
                                             "constexpr static std::string_view StaticTypeName()\\\n"
                                             "{{\\\n"
                                             "return static_type_name<{0}>::name();\\\n"
@@ -102,7 +103,8 @@ constexpr auto bodyGenerationOverridablePrefab =
         "virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}\\\n"
         "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}\\\n"
         "virtual bool IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}\\\n"
-        "virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}\\\n";
+        "virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}\\\n"
+        "virtual AllocationContext GetAllocationContext() const {{ return object_pool_allocator<{0}>::get_context(static_cast<const {0}*>(this)); }}\\\n";
 
 constexpr auto bodyGenerationResourceGetter =
         "template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, "
@@ -126,7 +128,7 @@ constexpr auto bodyGenerationResourceCreator =
         "const std::filesystem::path path_view(raw_path);\\\n"
         "if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && name_wise) {{\\\n"
         "return name_wise; }}\\\n"
-        "const auto obj = boost::shared_ptr<{0}>(new {0}(path_view, std::forward<Args>(args)...));\\\n"
+        "const auto obj = make_managed_shared<{0}>(path_view, std::forward<Args>(args)...);\\\n"
         "Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\\\n"
         "obj->Load();\\\n"
         "Engine::Serializer::Serialize(obj->GetName(), obj);\\\n"
@@ -142,7 +144,7 @@ constexpr auto bodyGenerationResourceCreator =
         "if (const auto& name_wise = "
         "Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock(); !name_view.empty() && "
         "name_wise) {{ return name_wise; }}\\\n"
-        "const auto obj = boost::shared_ptr<{0}>(new {0}(std::forward<Args>(args)...));\\\n"
+        "const auto obj = make_managed_shared<{0}>(std::forward<Args>(args)...);\\\n"
         "Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\\\n"
         "obj->Load();\\\n"
         "if constexpr (is_serializable_v<{0}>) {{\\\n"
