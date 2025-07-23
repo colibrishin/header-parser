@@ -104,7 +104,7 @@ constexpr auto bodyGenerationOverridablePrefab =
         "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}\\\n"
         "virtual bool IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}\\\n"
         "virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}\\\n"
-        "virtual AllocationContext GetAllocationContext() const {{ return object_pool_allocator<{0}>::get_context(static_cast<const {0}*>(this)); }}\\\n";
+        "virtual AllocationContext GetAllocationContext() const {{ return g_allocator_storage.get_allocator<{0}>().get_context(static_cast<const {0}*>(this)); }}\\\n";
 
 constexpr auto bodyGenerationResourceGetter =
         "template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, "
