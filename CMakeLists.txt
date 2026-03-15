@@ -1,8 +1,14 @@
+CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
 PROJECT(header-parser)
-CMAKE_MINIMUM_REQUIRED(VERSION 2.4)
+
+# Force Release (not MinSizeRel): always built for speed, not size.
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Release" "Debug")
 
 SET(SOURCES
   "main.cc"
+  "log.cc"
+  "log.h"
   "options.h"
   "token.h"
   "tokenizer.cc"

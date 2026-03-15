@@ -1,11 +1,5 @@
 #pragma once
-constexpr auto generatedHeaderFormat = "#ifdef {0}_GENERATED_H\n"
-                                       "#ifndef POST_{0}_H\n"
-                                       "#define POST_{0}_H\n"
-                                       "{1}\n"
-                                       "#endif\n"
-                                       "#endif\n"
-                                       "#ifndef {0}_GENERATED_H\n"
+constexpr auto generatedHeaderFormat = "#ifndef {0}_GENERATED_H\n"
                                        "#define {0}_GENERATED_H\n"
                                        "#include \"CoreType.h\"\n"
                                        "#include <array>\n"
@@ -24,7 +18,7 @@ constexpr auto generatedHeaderFormat = "#ifdef {0}_GENERATED_H\n"
                                        "#ifdef GENERATE_BODY_STATIC\n"
                                        "#undef GENERATE_BODY_STATIC\n"
                                        "#endif\n"
-                                       "#define GENERATE_BODY GENERATE_BODY_HEAD GENERATE_BODY_STATIC\n"
+                                       "#define GENERATE_BODY GENERATE_BODY_HEAD\n"
                                        "#define GENERATE_BODY_HEAD {3}\n"
                                        "#if !IS_DLL\n"
                                        "#define GENERATE_BODY_STATIC {4}\n"
@@ -40,23 +34,17 @@ constexpr auto staticForwardDeclarationWithoutNamespace = "{0} {1};\n";
 constexpr auto staticTypePrefab =
 "template <> struct polymorphic_type_hash<{0}>\n\
 {{\n\
-static constexpr size_t upcast_count = 1 + polymorphic_type_hash<{1}>::upcast_count;\n\
-static constexpr auto upcast_array = []\n\
-{{\n\
-HashArray<upcast_count> ret{{&type_hash<{0}>::value}};\n\
-std::copy_n(polymorphic_type_hash<{1}>::upcast_array.begin(),  polymorphic_type_hash<{1}>::upcast_array.size(), ret.data() + 1);\n\
-std::ranges::sort(ret, [](const HashType lhs, const HashType rhs) {{return *lhs < *rhs;}});\n\
-return ret;\n\
-}}();\n\
+using chain = type_list_prepend<{0}, polymorphic_type_hash<{1}>::chain>::type;\n\
+static constexpr size_t upcast_count = type_list_size<chain>::value;\n\
+static constexpr HashArray<upcast_count> upcast_array = chain_to_upcast_array<chain>::value;\n\
 constexpr static bool is_derived_of(const HashType base)\n\
 {{\n\
-if constexpr ((upcast_count * sizeof(HashTypeValue)) < (1 << 7))\n\
-{{\n\
-return std::ranges::find_if(upcast_array, [&base](const HashType other){{return base->Equal(*other);}}) != upcast_array.end();\n\
-}}\n\
-return std::ranges::binary_search(upcast_array, base, [](const HashType lhs, const HashType rhs){{return *lhs < *rhs;}});\n\
+return std::ranges::find_if(upcast_array, [&base](const HashType other){{return other && base && (other == base || other->v == base->v);}}) != upcast_array.end();\n\
 }}\n\
 }};\n";
+
+// Declaration only: so the generated header does not define the specialization in every TU.
+constexpr auto polymorphicTypeHashDecl = "template <> struct polymorphic_type_hash<{0}>;\n";
 
 constexpr auto internalTraits =
 "template <> struct is_internal<{0}> : public std::true_type {{}};\n";
@@ -93,65 +81,36 @@ constexpr auto bodyGenerationStaticPrefab = "friend struct ConstructorAccess;\\\
                                             "{{\\\n"
                                             "return &type_hash<{0}>::value;\\\n"
                                             "}}\\\n"
-                                            "constexpr static bool StaticIsDerivedOf(HashType hash)\\\n"
-                                            "{{\\\n"
-                                            "return polymorphic_type_hash<{0}>::is_derived_of(hash);\\\n"
-                                            "}}\\\n";
+                                            "constexpr static bool StaticIsDerivedOf(HashType hash);\\\n";
+constexpr auto bodyGenerationStaticIsDerivedOfDef =
+        "constexpr bool {0}::StaticIsDerivedOf(HashType hash) {{ return polymorphic_type_hash<{0}>::is_derived_of(hash); }}\n";
 
-constexpr auto bodyGenerationOverridablePrefab =
-        "virtual std::string_view GetTypeName() const {{ return {0}::StaticFullTypeName(); }}\\\n"
-        "virtual std::string_view GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}\\\n"
-        "virtual HashType GetTypeHash() const {{ return {0}::StaticTypeHash(); }}\\\n"
-        "virtual bool IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}\\\n"
-        "virtual bool IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}\\\n"
-        "virtual AllocationContext GetAllocationContext() const {{ return g_allocator_storage.get_allocator<{0}>().get_context(static_cast<const {0}*>(this)); }}\\\n";
+// Declaration-only: expanded in class in header. Definitions go to .generated.cpp.
+constexpr auto bodyGenerationOverridablePrefabDecl =
+        "virtual std::string_view GetTypeName() const;\\\n"
+        "virtual std::string_view GetPrettyTypeName() const;\\\n"
+        "virtual HashType GetTypeHash() const;\\\n"
+        "virtual bool IsDerivedOf(HashType base) const;\\\n"
+        "virtual bool IsBaseOf(HashType derived) const;\\\n"
+        "virtual AllocationContext GetAllocationContext() const;\\\n";
 
-constexpr auto bodyGenerationResourceGetter =
-        "template <typename Void = void, typename Name> requires (std::is_base_of_v<Engine::Abstracts::Resource, {0}>, "
-        "std::is_constructible_v<std::string_view, Name>)\\\n"
-        "static Engine::Weak<{0}> Get(const Name& name) {{ return "
-        "Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name); }}\\\n"
-        "template <typename Void = void, typename MetaPath> requires (std::is_base_of_v<Engine::Abstracts::Resource, "
-        "{0}>, std::is_constructible_v<std::filesystem::path, MetaPath>)\\\n"
-        "static Engine::Weak<{0}> GetByMetadataPath(const MetaPath& meta_path) {{ return "
-        "Engine::Managers::ResourceManager::GetInstance().GetResourceByMetadataPath<{0}>(meta_path); }}\\\n";
+constexpr auto bodyGenerationOverridablePrefabDef =
+        "std::string_view {0}::GetTypeName() const {{ return {0}::StaticFullTypeName(); }}\n"
+        "std::string_view {0}::GetPrettyTypeName() const {{ return {0}::StaticTypeName(); }}\n"
+        "HashType {0}::GetTypeHash() const {{ return {0}::StaticTypeHash(); }}\n"
+        "bool {0}::IsDerivedOf(HashType base) const {{ return {0}::StaticIsDerivedOf(base); }}\n"
+        "bool {0}::IsBaseOf(HashType derived) const {{ return derived->IsDerivedOf({0}::StaticTypeHash()); }}\n"
+        "AllocationContext {0}::GetAllocationContext() const {{ return g_allocator_storage.get_allocator<{0}>().get_context(static_cast<const {0}*>(this)); }}\n";
 
-constexpr auto bodyGenerationResourceCreator =
-        "template <typename Name, typename RawPath, typename... Args> requires (\\\n"
-        "std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\\\n"
-        "std::is_constructible_v<std::string_view, Name>,\\\n"
-        "std::is_constructible_v<std::filesystem::path, RawPath>,\\\n"
-        "std::is_constructible_v<{0}, RawPath, Args...>)\\\n"
-        "static Engine::Strong<{0}> Create(const Name& name, const RawPath& raw_path, Args&&... args)\\\n"
-        "{{\\\n"
-        "const std::string_view name_view(name);\\\n"
-        "const std::filesystem::path path_view(raw_path);\\\n"
-        "if (const auto& name_wise = {0}::Get(name_view).lock(); !name_view.empty() && name_wise) {{\\\n"
-        "return name_wise; }}\\\n"
-        "const auto obj = make_managed_shared<{0}>(path_view, std::forward<Args>(args)...);\\\n"
-        "Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\\\n"
-        "obj->Load();\\\n"
-        "Engine::Serializer::Serialize(obj->GetName(), obj);\\\n"
-        "return obj;\\\n"
-        "}}\\\n"
-        "template <typename Name, typename... Args> requires (\\\n"
-        "std::is_base_of_v<Engine::Abstracts::Resource, {0}>,\\\n"
-        "std::is_constructible_v<std::string_view, Name>,\\\n"
-        "!std::is_constructible_v<{0}, std::filesystem::path, Args...>)\\\n"
-        "static Engine::Strong<{0}> Create(const Name& name, Args&&... args)\\\n"
-        "{{\\\n"
-        "const std::string_view name_view(name);\\\n"
-        "if (const auto& name_wise = "
-        "Engine::Managers::ResourceManager::GetInstance().GetResource<{0}>(name_view).lock(); !name_view.empty() && "
-        "name_wise) {{ return name_wise; }}\\\n"
-        "const auto obj = make_managed_shared<{0}>(std::forward<Args>(args)...);\\\n"
-        "Engine::Managers::ResourceManager::GetInstance().AddResource(name_view, obj);\\\n"
-        "obj->Load();\\\n"
-        "if constexpr (is_serializable_v<{0}>) {{\\\n"
-        "Engine::Serializer::Serialize(obj->GetName(), obj);\\\n"
-        "}}\\\n"
-        "return obj;\\\n"
-        "}}\\\n";
+// Type limitation for resource base: enforced in .generated.cpp (where class is complete) to avoid __is_base_of on incomplete type in header.
+constexpr auto bodyGenerationResourceBaseAssert =
+        "static_assert(std::is_base_of_v<Engine::Abstracts::Resource, {0}>);\n";
+
+// Resource getter: use Resource.h macro so the getter is defined in one place.
+constexpr auto bodyGenerationResourceGetter = "RESOURCE_SELF_INFER_GETTER({0})\\\n";
+
+// Resource creator: use Resource.h macro so both Create overloads are defined in one place.
+constexpr auto bodyGenerationResourceCreator = "RESOURCE_SELF_INFER_CREATE({0})\\\n";
 
 constexpr auto bodyGenerationModuleDecl =
         "private: static const std::vector<std::string> s_dependencies_;\\\n"
@@ -173,3 +132,13 @@ constexpr auto registerBoostMetaType =
 
 constexpr auto registerBoostMetaTypeImpl =
 "BOOST_CLASS_EXPORT_IMPLEMENT(HashTypeT<{0}>)\n";
+
+// .generated.cpp: include original header (class definition), then generated header; implementations follow.
+// {0} = include path for original header (e.g. "Public/ClientModule" so [project.SourceRootPath] finds it).
+// {1} = stem only for .generated.h (same dir as .cpp). {2} = cpp content.
+constexpr auto generatedCppFormat =
+"// Generated by header-parser - do not edit\n"
+"#include \"{0}.h\"\n"
+"#include \"{1}.generated.h\"\n"
+"\n"
+"{2}\n";

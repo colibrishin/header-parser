@@ -1,5 +1,6 @@
 #include "tokenizer.h"
 #include "token.h"
+#include "log.h"
 #include <string>
 #include <cctype>
 #include <stdexcept>
@@ -552,7 +553,9 @@ bool Tokenizer::Error(const char* fmt, ...)
   va_start(args, fmt);
   vsnprintf(buffer, 512, fmt, args);
   va_end(args);
-  printf("ERROR: %d:%d: %s", static_cast<int>(cursorLine_), 0, buffer);
+  char lineBuf[64];
+  snprintf(lineBuf, sizeof(lineBuf), "ERROR: %d:%d: %s", static_cast<int>(cursorLine_), 0, buffer);
+  LogErr(lineBuf);
   hasError_ = true;
   return false;
 }

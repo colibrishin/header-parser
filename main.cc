@@ -773,6 +773,7 @@ int main(int argc, char** argv)
   Options options;
   std::string inputFile;
   std::string buildConfigurationName;
+  unsigned int maxJobs = 0;
   try
   {
     using namespace TCLAP;
@@ -791,7 +792,6 @@ int main(int argc, char** argv)
 
     cmd.parse(argc, argv);
 
-    unsigned int maxJobs = 0;
     if (const char* env = std::getenv("HEADER_PARSER_MAX_JOBS"))
     {
         try { maxJobs = static_cast<unsigned int>(std::stoul(env)); }
