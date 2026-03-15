@@ -19,6 +19,7 @@
 #include <set>
 #include <cctype>
 #include <cwctype>
+#include <cstdlib>
 
 #include "bodygeneration_macro.h"
 #include "postpone_macro.h"
@@ -53,6 +54,15 @@ static std::string DropFirstDirectory(const std::filesystem::path& path)
     if (firstSeperator == std::string::npos)
         return srcPathStr;
     return { srcPathStr.begin() + firstSeperator + 1, srcPathStr.end() };
+}
+
+// Path for #include in tracking .generated.h: use path as-is (relative to project source root)
+// so e.g. "Components/Public/CubifyComponent.h" is correct; do not drop first segment.
+static std::string GetIncludePathForTracking(const std::filesystem::path& path)
+{
+    std::string s = path.generic_string();
+    std::transform(s.begin(), s.end(), s.begin(), [](char c) { return (c == '\\') ? '/' : c; });
+    return s;
 }
 
 static std::string GetFirstDirectory(const std::filesystem::path& path)
@@ -282,7 +292,7 @@ static void UpdateLists(
 
         for (const auto& name : trackingList)
         {
-            InclusionStream << std::format("#include \"{0}\"\n", DropFirstDirectory(name.second));
+            InclusionStream << std::format("#include \"{0}\"\n", GetIncludePathForTracking(name.second));
             registerMacroStream << std::format(GetRegistriationFormat<TrackingT>(), name.first);
             unregisterMacroStream << std::format(GetUnregistriationFormat<TrackingT>(), name.first);
         }
@@ -777,8 +787,21 @@ int main(int argc, char** argv)
     MultiArg<std::string> customMacro("m", "macro", "Custom macro names to parse", false, "", cmd);
     UnlabeledValueArg<std::string> inputFileArg("inputFile", "The file to process", true, "", "", cmd);
     ValueArg<std::string> buildName("b", "build", "The name of the build configuration", true, "", "", cmd);
+    ValueArg<std::string> maxJobsArg("j", "max-jobs", "Max parallel file jobs (1=sequential, 0=default parallel). Env HEADER_PARSER_MAX_JOBS overrides.", false, "1", "", cmd);
 
     cmd.parse(argc, argv);
+
+    unsigned int maxJobs = 0;
+    if (const char* env = std::getenv("HEADER_PARSER_MAX_JOBS"))
+    {
+        try { maxJobs = static_cast<unsigned int>(std::stoul(env)); }
+        catch (...) {}
+    }
+    if (maxJobs == 0)
+    {
+        try { maxJobs = static_cast<unsigned int>(std::stoul(maxJobsArg.getValue())); }
+        catch (...) {}
+    }
 
     inputFile = inputFileArg.getValue();
     options.classNameMacro = className.getValue();
@@ -817,11 +840,9 @@ int main(int argc, char** argv)
       inputFiles.emplace_back(readLine);
   }
 
-  // Open from file
-  std::for_each
-		  (
-		   std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), [&options, &buildConfigurationName](const std::string& filePath)
-		   {
+  // Open from file (sequential when --max-jobs=1 or HEADER_PARSER_MAX_JOBS=1 to reduce thread count)
+  auto processOneFile = [&options, &buildConfigurationName](const std::string& filePath)
+  {
 			   std::ifstream t(filePath);
 			   if (!t.is_open())
 			   {
@@ -981,9 +1002,11 @@ int main(int argc, char** argv)
 			   }
 
             return 0;
-		   }
-		  );
-
+  };
+  if (maxJobs == 1)
+    std::for_each(std::execution::seq, inputFiles.begin(), inputFiles.end(), processOneFile);
+  else
+    std::for_each(std::execution::par_unseq, inputFiles.begin(), inputFiles.end(), processOneFile);
 
     if (!postponedFunctions.empty())
     {
