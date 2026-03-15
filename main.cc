@@ -1,6 +1,7 @@
  #include "parser.h"
 #include "handler.h"
 #include "options.h"
+#include "log.h"
 #include <tclap/CmdLine.h>
 #include <regex>
 
@@ -16,6 +17,7 @@
 #include <execution>
 #include <functional>
 #include <set>
+#include <cctype>
 #include <cwctype>
 
 #include "bodygeneration_macro.h"
@@ -47,7 +49,9 @@ static std::string DropFirstDirectory(const std::filesystem::path& path)
             return c;
         });
 
-    const size_t& firstSeperator = srcPathStr.find_first_of(L'/');
+    const size_t firstSeperator = srcPathStr.find_first_of('/');
+    if (firstSeperator == std::string::npos)
+        return srcPathStr;
     return { srcPathStr.begin() + firstSeperator + 1, srcPathStr.end() };
 }
 
@@ -64,7 +68,9 @@ static std::string GetFirstDirectory(const std::filesystem::path& path)
             return c;
         });
 
-    const size_t& firstSeperator = srcPathStr.find_first_of(L'/');
+    const size_t firstSeperator = srcPathStr.find_first_of('/');
+    if (firstSeperator == std::string::npos)
+        return srcPathStr;
     return { srcPathStr.begin(), srcPathStr.begin() + firstSeperator };
 }
 
@@ -81,15 +87,40 @@ static std::wstring GetFirstDirectoryW(const std::filesystem::path& path)
             return c;
         });
 
-    const size_t& firstSeperator = srcPathWstr.find_first_of(L'/');
+    const size_t firstSeperator = srcPathWstr.find_first_of(L'/');
+    if (firstSeperator == std::wstring::npos)
+        return srcPathWstr;
     return { srcPathWstr.begin(), srcPathWstr.begin() + firstSeperator };
+}
+
+// Path for #include of the original header in .generated.cpp: preserve full path (e.g. ClientModule/Public/ClientModule)
+// so [project.SourceRootPath] finds the real file. Must include Public/Private segment (not just first dir + stem).
+static std::string GetIncludePathForOriginalHeader(const std::filesystem::path& srcPath)
+{
+    std::filesystem::path p = srcPath.generic_string();
+    std::string pathStr = (p.parent_path() / p.stem()).generic_string();
+    std::transform(pathStr.begin(), pathStr.end(), pathStr.begin(), [](char c) { return (c == '\\') ? '/' : c; });
+    return pathStr;
+}
+
+// Same Public/Private as GetDestinationPath; use for include paths so tracking headers respect the normal path.
+static std::string GetHeaderGeneratedSubdir(const std::filesystem::path& srcPath)
+{
+    const std::wstring pathStr = srcPath.generic_wstring();
+    if (pathStr.find(L"/Public/") != std::wstring::npos)
+        return "Public";
+    if (pathStr.find(L"/Private/") != std::wstring::npos)
+        return "Private";
+    const std::wstring firstDir = GetFirstDirectoryW(srcPath);
+    return (firstDir.find(L'/') != std::wstring::npos || firstDir == srcPath.generic_wstring()) ? "Public" : std::string(firstDir.begin(), firstDir.end());
 }
 
 static std::filesystem::path GetDestinationPath(std::filesystem::path srcPath)
 {
-    const std::wstring subDirectory = GetFirstDirectoryW(srcPath);
-    const auto& dstPath = std::filesystem::path("HeaderGenerated") / subDirectory / srcPath.replace_extension(".generated.h").filename();
-
+    // Emit under HeaderGenerated/Public/ or .../Private/ when source is under Public/ or Private/,
+    // so the build's IncludePaths (HeaderGenerated, HeaderGenerated/Public, HeaderGenerated/Private) find the file.
+    const std::string subDir = GetHeaderGeneratedSubdir(srcPath);
+    const auto& dstPath = std::filesystem::path("HeaderGenerated") / subDir / srcPath.replace_extension(".generated.h").filename();
     return dstPath;
 }
 
@@ -97,6 +128,9 @@ static std::filesystem::path GetDestinationPath(std::filesystem::path srcPath)
 
 std::mutex movedStreamLock;
 std::unordered_map<std::filesystem::path, std::fstream> movedStream;
+
+std::mutex cppStreamsLock;
+std::unordered_map<std::filesystem::path, std::stringstream> cppStreamsByFile;
 
 std::mutex postponedFunctionsLock;
 std::priority_queue<std::pair<size_t, std::function<void()>>, std::vector<std::pair<size_t, std::function<void()>>>, GreaterComparer> postponedFunctions;
@@ -214,7 +248,7 @@ static void UpdateLists(
 
         if (trackingBundle.is_open())
         {
-            std::cout << "Reading from previously generated list file\n";
+            LogOut("Reading from previously generated list file\n");
 
             while (!trackingBundle.eof())
             {
@@ -238,7 +272,7 @@ static void UpdateLists(
         std::ofstream trackingMacroGeneratedFile(subDirectoryOfDst / trackingOutputFileName);
         if (!trackingMacroGeneratedFile)
         {
-            std::cerr << "Could not create the tracking macro file" << '\n';
+            LogErr("Could not create the tracking macro file\n");
             return;
         }
 
@@ -255,14 +289,14 @@ static void UpdateLists(
 
         trackingMacroGeneratedFile << std::format(GetRegistriationBody<TrackingT>(), InclusionStream.str(), registerMacroStream.str(), unregisterMacroStream.str());
         trackingMacroGeneratedFile.close();
-        std::cout << "tracking macro file has been generated\n";
+        LogOut("tracking macro file has been generated\n");
     }
 
     {
         std::ofstream trackingBundle(subDirectoryOfDst / trackingListFileName, std::ios::trunc);
         if (!trackingBundle.is_open())
         {
-            std::cerr << "Unable to open the generated tracking file\n";
+            LogErr("Unable to open the generated tracking file\n");
             return;
         }
 
@@ -295,7 +329,7 @@ private:
 //----------------------------------------------------------------------------------------------------
 void print_usage()
 {
-  std::cout << "Usage: inputFile" << '\n';
+  LogOut("Usage: inputFile\n");
 }
 //----------------------------------------------------------------------------------------------------
 
@@ -320,7 +354,7 @@ std::string GenerateSerializationDeclaration(const rapidjson::Value* val, bool i
     {
         if ((*it)["type"] == "property")
         {
-            std::cout << "Found property " << (*it)["name"].GetString() << '\n';
+            LogOut(std::string("Found property ") + (*it)["name"].GetString() + "\n");
             propertyNames.emplace_back((*it)["name"].GetString());
         }
     }
@@ -352,12 +386,11 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
 
         const size_t classSuffixOffset = joinedNamespace.substr(0, joinedNamespace.size() - 2).rfind("::");
 
-        std::cout << std::format("base class scope: {}, class scope: {}, suffix offset: {}", baseClassScope, classScope, classSuffixOffset) <<
-            '\n';
+        LogOut(std::format("base class scope: {}, class scope: {}, suffix offset: {}\n", baseClassScope, classScope, classSuffixOffset));
 
         if (baseClassScope == classScope)
         {
-            std::cout << "Use class namespace..." << '\n';
+            LogOut("Use class namespace...\n");
             // root namescope is same but other than that, every namespaces are different.
             return;
         }
@@ -367,7 +400,7 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
             if (const std::string_view classSuffixScope = joinedNamespace.substr(classSuffixOffset);
 				baseClassScope == classSuffixScope)
             {
-                std::cout << "Merge class namespace...";
+                LogOut("Merge class namespace...");
 	            // namespace can be merged.
 				outBaseClassNamespace = joinedNamespace;
                 return;
@@ -375,7 +408,7 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
         }
         else
         {
-            std::cout << "Append to class namespace..." << '\n';
+            LogOut("Append to class namespace...\n");
 	        outBaseClassNamespace.insert(outBaseClassNamespace.begin(), joinedNamespace.begin(), joinedNamespace.end());
             return;
         }
@@ -386,13 +419,13 @@ void ReconstructBaseClosureNamespaceImpl(const std::string_view joinedNamespace,
         // If namespace is one, merge with class namespace.
         if (parentScopeBegin == std::string::npos)
         {
-            std::cout << "Class has one namespace, merging..." << '\n';
+            LogOut("Class has one namespace, merging...\n");
             outBaseClassNamespace.insert(outBaseClassNamespace.begin(), { ':', ':'});
             outBaseClassNamespace.insert(outBaseClassNamespace.begin(), joinedNamespace.begin(), joinedNamespace.end());
             return;
         }
 
-        std::cout << "Remove the nearest namespace and appending..." << '\n';
+        LogOut("Remove the nearest namespace and appending...\n");
         const std::string_view parentScope = joinedNamespace.substr(0, parentScopeBegin);
         outBaseClassNamespace.insert(outBaseClassNamespace.begin(), { ':', ':' });
         outBaseClassNamespace.insert(outBaseClassNamespace.begin(), parentScope.begin(), parentScope.end());
@@ -431,8 +464,7 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
                 if (std::string_view thisArg = (*arg)["name"].GetString();
                     closureName == thisArg && thisArg.rfind("::") == std::string::npos)
                 {
-                    std::cout << "Found class name in the argument, with no namespaces. Append the class namespace..." <<
-                        '\n';
+                    LogOut("Found class name in the argument, with no namespaces. Append the class namespace...\n");
                     argumentStream << std::format("{}{}{}", joinedNamespace, (*arg)["name"].GetString(), (arg + 1 == templateArguments.End()) ? "" : ",");
                 }
                 else
@@ -442,7 +474,7 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
             }
             argumentStream << '>';
 
-            std::cout << "Found template arguments " << argumentStream.str() << '\n';
+            LogOut(std::string("Found template arguments ") + argumentStream.str() + "\n");
             outBaseClosure += argumentStream.str();
         }
 
@@ -463,12 +495,12 @@ bool ReconstructBaseClosureAndNamespace(const rapidjson::Value* it, const std::s
     return isNativeBaseClass;
 }
 
-void TestTags(const std::string_view buildConfigurationName, const std::filesystem::path& filePath, std::fstream& outputStream, const std::string_view joinedNamespace, const rapidjson::Value* it, const bool reEntry)
+void TestTags(const std::string_view buildConfigurationName, const std::filesystem::path& filePath, std::fstream& outputStream, std::ostream& cppStream, const std::string_view joinedNamespace, const rapidjson::Value* it, const bool reEntry)
 {
     if ((*it)["type"] == "class")
     {
         const std::string closureName = (*it)["name"].GetString();
-        std::cout << "Reading closure " << closureName << '\n';
+        LogOut(std::string("Reading closure ") + closureName + "\n");
         std::string baseClosure;
         std::string baseClosureNamespace;
         bool        isNativeBaseClass = ReconstructBaseClosureAndNamespace
@@ -476,7 +508,7 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
 
         std::string closureFullName(joinedNamespace.begin(), joinedNamespace.end());
         closureFullName += closureName;
-        std::cout << "Closure parsed with " << closureName << " and " << baseClosureNamespace << baseClosure << '\n';
+        LogOut(std::format("Closure parsed with {} and {}{}\n", closureName, baseClosureNamespace, baseClosure));
 
         std::stringstream additionalHeaders;
         std::stringstream bodyGenerated;
@@ -484,7 +516,16 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
         std::stringstream staticsGenerated;
         std::stringstream postGenerated;
 
+        // Postpone clientModule before writing so we only emit body/cpp once on re-entry (avoids duplicate StaticIsDerivedOf etc.).
+        if ((*it)["isstruct"].GetBool() == true && it->HasMember("meta"))
+        {
+            const auto& meta_flag = (*it)["meta"];
+            if (meta_flag.HasMember("clientModule") && !reEntry)
+                throw postpone_exception(1 << 2);
+        }
+
         bodyGenerated << std::format(bodyGenerationStaticPrefab, closureFullName, baseClosureNamespace + baseClosure);
+        cppStream << std::format(bodyGenerationStaticIsDerivedOfDef, closureFullName);
 
         std::string closureType;
         if ((*it)["isstruct"].GetBool() == true)
@@ -497,12 +538,13 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
 
                 if ( meta_flag.HasMember( "virtual" ) )
                 {
-                    bodyGenerated << std::format( bodyGenerationOverridablePrefab, closureName );
+                    bodyGenerated << std::format( bodyGenerationOverridablePrefabDecl, closureName );
+                    cppStream << std::format( bodyGenerationOverridablePrefabDef, closureFullName );
                 }
 
                 if (meta_flag.HasMember("module"))
                 {
-                    std::cout << "Module found, writing the dependencies\n";
+                    LogOut("Module found, writing the dependencies\n");
                     std::stringstream dependencyStream;
 
                     for (const std::string& dependency : dependencies[GetFirstDirectory(filePath)])
@@ -516,13 +558,9 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
 
                 if (meta_flag.HasMember("clientModule"))
                 {
-                    if (!reEntry) 
+                    // reEntry only: we throw before writing on first pass (see early check above).
                     {
-                        throw postpone_exception(1 << 2);
-                    }
-                    else 
-                    {
-                        std::cout << "Module found, writing the dependencies\n";
+                        LogOut("Module found, writing the dependencies\n");
                         std::stringstream dependencyStream;
 
                         for (const std::string& dependency : dependencies[GetFirstDirectory(filePath)])
@@ -533,6 +571,7 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                         bodyGenerated << generatedClientModuleDecl;
                         bodyGenerated << bodyGenerationModuleDecl;
                         postGenerated << std::format(bodyGenerationModuleImpl, closureFullName, dependencyStream.str());
+                        // Generated header include path (HeaderGenerated[/Public|/Private]) is set by Sharpmake; use filename only.
                         postGenerated << std::format("#include \"{0}\"\n", componentTrackingMacroedFileName);
                         postGenerated << std::format("#include \"{0}\"\n", objectTrackingMacroedFileName);
                         postGenerated << std::format("#include \"{0}\"\n", resourceTrackingMacroedFileName);
@@ -564,7 +603,10 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
 
                 if (meta_flag.HasMember("resource"))
                 {
+                    additionalHeaders << "#include \"ResourceManager.h\"\n"
+                                      << "#include \"CoreMacro.h\"\n";
                     bodyGenerated << std::format(bodyGenerationResourceGetter, closureName);
+                    postGenerated << std::format(bodyGenerationResourceBaseAssert, closureFullName);
 
                     if (!meta_flag.HasMember("abstract"))
                     {
@@ -614,7 +656,8 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
                 }   
             }
 
-            bodyGenerated << std::format(bodyGenerationOverridablePrefab, closureName);
+            bodyGenerated << std::format(bodyGenerationOverridablePrefabDecl, closureName);
+            cppStream << std::format(bodyGenerationOverridablePrefabDef, closureFullName);
         }
         
         if (joinedNamespace.empty()) 
@@ -625,6 +668,7 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
         {
             staticsGenerated << std::format(staticForwardDeclaration, joinedNamespace.substr(0, joinedNamespace.size() - 2), closureType, closureName);
         }
+        staticsGenerated << std::format(staticTypePrefab, closureFullName, baseClosureNamespace + baseClosure);
 
         if (it->HasMember("meta"))
         {
@@ -653,16 +697,23 @@ void TestTags(const std::string_view buildConfigurationName, const std::filesyst
             }
         }
         
-        staticsGenerated << std::format(staticTypePrefab, closureFullName, baseClosureNamespace + baseClosure);
-
         std::string nameUpperString = closureName;
         std::ranges::transform(nameUpperString, nameUpperString.begin(), [](const char& c){return std::toupper(c);});
-        
-        outputStream << std::format(generatedHeaderFormat, nameUpperString, postGenerated.str(), additionalHeaders.str(), bodyGenerated.str(), bodyForStaticGenerated.str(), staticsGenerated.str());
+
+        // Emit implementation (s_dependencies_, cloneImpl, BOOST exports) to .generated.cpp; generatedHeaderFormat has no {1}.
+        cppStream << postGenerated.str();
+
+        outputStream << std::format(generatedHeaderFormat,
+            nameUpperString,
+            postGenerated.str(),
+            additionalHeaders.str(),
+            bodyGenerated.str(),
+            bodyForStaticGenerated.str(),
+            staticsGenerated.str());
     }
 }
 
-void RecurseNamespace(const std::string_view buildConfigurationName, const std::filesystem::path& filePath, std::fstream& outputStream, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace, const bool reEntry)
+void RecurseNamespace(const std::string_view buildConfigurationName, const std::filesystem::path& filePath, std::fstream& outputStream, std::ostream& cppStream, const rapidjson::Value* root, std::vector<std::string_view>& currentNamespace, const bool reEntry)
 {
     const rapidjson::Value& ref = *root;
 
@@ -676,7 +727,7 @@ void RecurseNamespace(const std::string_view buildConfigurationName, const std::
             {
                 if ((*it)["type"] == "namespace")
                 {
-                    RecurseNamespace(buildConfigurationName, filePath, outputStream, it, currentNamespace, reEntry);
+                    RecurseNamespace(buildConfigurationName, filePath, outputStream, cppStream, it, currentNamespace, reEntry);
                     continue;
                 }
 
@@ -686,8 +737,8 @@ void RecurseNamespace(const std::string_view buildConfigurationName, const std::
                     joinedNamespace += std::format("{}{}", identifier, "::");
                 }
 
-                std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
-                TestTags(buildConfigurationName, filePath, outputStream, joinedNamespace, it, reEntry);
+                LogOut(std::string("Test header tags with namespace ") + std::string(joinedNamespace) + "\n");
+                TestTags(buildConfigurationName, filePath, outputStream, cppStream, joinedNamespace, it, reEntry);
             }
         }
     }
@@ -699,14 +750,16 @@ void RecurseNamespace(const std::string_view buildConfigurationName, const std::
             joinedNamespace += std::format("{}{}", identifier, "::");
         }
 
-        std::cout << "Test header tags with namespace " << joinedNamespace << '\n';
-        TestTags(buildConfigurationName, filePath, outputStream, joinedNamespace, root, reEntry);
+        LogOut(std::string("Test header tags with namespace ") + joinedNamespace + "\n");
+        TestTags(buildConfigurationName, filePath, outputStream, cppStream, joinedNamespace, root, reEntry);
     }
 }
 
 //----------------------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+  StartLogThread();
+
   Options options;
   std::string inputFile;
   std::string buildConfigurationName;
@@ -738,14 +791,16 @@ int main(int argc, char** argv)
   }
   catch (TCLAP::ArgException& e)
   {
-    std::cerr << "error: " << e.error() << " for arg " << e.argId() << '\n';
+    LogErr(std::string("error: ") + e.error() + " for arg " + e.argId() + "\n");
+    StopLogThread();
     return -1;
   }
 
   std::ifstream inputBundle(inputFile);
   if (!inputBundle.is_open())
   {
-      std::cerr << "Could not open " << inputFile << '\n';
+      LogErr(std::string("[header-parser] Could not open target file: ") + inputFile + "\n");
+      StopLogThread();
       return -1;
   }
 
@@ -754,6 +809,11 @@ int main(int argc, char** argv)
   std::string readLine;
   while (std::getline(inputBundle, readLine))
   {
+      // Trim CRLF / trailing whitespace (balius writeln! on Windows writes \r\n)
+      while (!readLine.empty() && (readLine.back() == '\r' || readLine.back() == '\n' || std::isspace(static_cast<unsigned char>(readLine.back()))))
+          readLine.pop_back();
+      if (readLine.empty())
+          continue;
       inputFiles.emplace_back(readLine);
   }
 
@@ -765,30 +825,30 @@ int main(int argc, char** argv)
 			   std::ifstream t(filePath);
 			   if (!t.is_open())
 			   {
-				   std::cerr << "Could not open " << filePath << '\n';
+				   LogErr(std::string("[header-parser] Could not open header: ") + filePath + "\n");
 				   return -1;
 			   }
 
                {
                    const std::string subDirectory = GetFirstDirectory(filePath);
-                   std::filesystem::path dependencyFileName = subDirectory;
-                   dependencyFileName /= (buildConfigurationName + ".dep");
-                   std::ifstream dependencyFile(dependencyFileName.generic_string());
-
-                   if (!dependencyFile.is_open())
-                   {
-                       std::cerr << "Could not open " << dependencyFileName << '\n';
-                       return -1;
-                   }
-
                    std::lock_guard lock(dependenciesLocks);
                    if (!dependencies.contains(subDirectory))
                    {
-                       std::string readLine;
-                       while (std::getline(dependencyFile, readLine))
+                       std::filesystem::path dependencyFileName = subDirectory;
+                       dependencyFileName /= (buildConfigurationName + ".dep");
+                       std::ifstream dependencyFile(dependencyFileName.generic_string());
+                       if (dependencyFile.is_open())
                        {
-                           dependencies[subDirectory].push_back(readLine);
+                           std::string readLine;
+                           while (std::getline(dependencyFile, readLine))
+                           {
+                               while (!readLine.empty() && (readLine.back() == '\r' || readLine.back() == '\n' || std::isspace(static_cast<unsigned char>(readLine.back()))))
+                                   readLine.pop_back();
+                               if (!readLine.empty())
+                                   dependencies[subDirectory].push_back(readLine);
+                           }
                        }
+                       // If .dep is missing, leave dependencies[subDirectory] empty so module s_dependencies_ is still generated as {}.
                    }
                }
 
@@ -800,28 +860,28 @@ int main(int argc, char** argv)
 			   {
                    const std::filesystem::path srcPath = filePath;
                    const std::filesystem::path& dstPath = GetDestinationPath(srcPath);
-                   std::cout << dstPath << "\n";
 				   if (!exists(dstPath.parent_path()))
-				   {
-					   std::cout << "Create directory " << dstPath.parent_path() << '\n';
 					   create_directories(dstPath.parent_path());
-				   }
 
 				   std::fstream outputStream(dstPath.c_str(), std::ios::out);
 
 				   if (!outputStream.is_open())
 				   {
-					   std::cerr << "Unable to create a file " << dstPath << '\n';
+					   LogErr(std::string("[header-parser] Unable to create output: ") + dstPath.generic_string() + "\n");
 					   return -1;
                    }
 
-				   std::cout << "== Start of " << dstPath << " ==" << '\n';
-				   std::cout << "Parsing json" << '\n';
 				   std::shared_ptr<rapidjson::Document> document = std::make_shared<rapidjson::Document>();
 				   document->Parse(parser.result().c_str());
 				   assert(document->IsArray());
 
-				   std::cout << parser.result().c_str() << '\n';
+				   std::ostream* pCppStream = nullptr;
+				   {
+					   std::lock_guard lock(cppStreamsLock);
+					   cppStreamsByFile[srcPath].str("");
+					   cppStreamsByFile[srcPath].clear();
+					   pCppStream = &cppStreamsByFile[srcPath];
+				   }
 
 				   try
 				   {
@@ -833,12 +893,11 @@ int main(int argc, char** argv)
 						   queue.reserve(64);
                            try 
                            {
-                               RecurseNamespace(buildConfigurationName, srcPath, outputStream, it, queue, false);
+                               RecurseNamespace(buildConfigurationName, srcPath, outputStream, *pCppStream, it, queue, false);
                            }
                            catch (postpone_exception& e)
                            {
                                postponeTriggered = true;
-                               std::cout << "Postpone caught\n";
 
                                {
                                    std::lock_guard documentLock(bufferedDocumentsLock);
@@ -852,17 +911,31 @@ int main(int argc, char** argv)
                                            std::vector<std::string_view> queue{};
                                            queue.reserve(64);
                                            std::fstream stream;
-
+                                           std::ostream* pCpp = nullptr;
                                            {
                                                std::lock_guard lock(movedStreamLock);
                                                stream = std::move(movedStream.at(srcPath));
                                            }
+                                           {
+                                               std::lock_guard lock(cppStreamsLock);
+                                               pCpp = &cppStreamsByFile[srcPath];
+                                           }
 
-                                           RecurseNamespace(buildConfigurationName.c_str(), srcPath, stream, it, queue, true);
+                                           RecurseNamespace(buildConfigurationName.c_str(), srcPath, stream, *pCpp, it, queue, true);
 
                                            if (stream.is_open())
                                            {
                                                stream.close();
+                                           }
+
+                                           const auto cppPath = GetDestinationPath(srcPath).parent_path() / (srcPath.stem().string() + ".generated.cpp");
+                                           std::ofstream cppFile(cppPath);
+                                           if (cppFile.is_open())
+                                           {
+                                               std::string cppContent;
+                                               { std::lock_guard lock(cppStreamsLock); cppContent = cppStreamsByFile[srcPath].str(); }
+                                               cppFile << std::format(generatedCppFormat, GetIncludePathForOriginalHeader(srcPath), srcPath.stem().string(), cppContent);
+                                               cppFile.close();
                                            }
                                        } });
                                }
@@ -875,10 +948,22 @@ int main(int argc, char** argv)
                            std::lock_guard lock(movedStreamLock);
                            movedStream[filePath] = std::move(outputStream);
                        }
+					   else
+					   {
+						   const auto cppPath = GetDestinationPath(srcPath).parent_path() / (srcPath.stem().string() + ".generated.cpp");
+						   std::ofstream cppFile(cppPath);
+						   if (cppFile.is_open())
+						   {
+							   std::string cppContent;
+							   { std::lock_guard lock(cppStreamsLock); cppContent = cppStreamsByFile[srcPath].str(); }
+							   cppFile << std::format(generatedCppFormat, GetIncludePathForOriginalHeader(srcPath), srcPath.stem().string(), cppContent);
+							   cppFile.close();
+						   }
+					   }
 				   }
 				   catch (std::exception& e)
 				   {
-					   std::cerr << e.what() << '\n';
+					   LogErr(std::string("[header-parser] Exception ") + filePath + ": " + e.what() + "\n");
                        if (outputStream.is_open())
                        {
                            outputStream.close();
@@ -890,6 +975,10 @@ int main(int argc, char** argv)
                        outputStream.close();
                    }
 			   }
+			   else
+			   {
+			       LogErr(std::string("[header-parser] Parse failed: ") + filePath + "\n");
+			   }
 
             return 0;
 		   }
@@ -898,7 +987,6 @@ int main(int argc, char** argv)
 
     if (!postponedFunctions.empty())
     {
-        std::cout << "Process remaining postponed\n";
 
         while (!postponedFunctions.empty())
         {
@@ -907,6 +995,7 @@ int main(int argc, char** argv)
             func.second();
         }
     }
-  
+
+  StopLogThread();
 	return 0;
 }
